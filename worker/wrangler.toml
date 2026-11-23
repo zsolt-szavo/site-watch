@@ -11,6 +11,12 @@ MAX_WATCHES = "100"
 
 # Secrets (wrangler secret put …; locally in .dev.vars): INVITE_CODE, CHECKER_TOKEN
 
+# Public API: at most 60 requests per minute per IP address.
+[[ratelimits]]
+name = "API_LIMIT"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
 [[d1_databases]]
 binding = "DB"
 database_name = "site-watch"

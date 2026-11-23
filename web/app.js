@@ -203,7 +203,7 @@ async function deleteWatch(btn) {
   const li = btn.closest(".watch");
   const w = watches.find((x) => x.id === li.dataset.id);
   let invite = store.get(INVITE_KEY) || $("#add").elements.invite.value.trim();
-  if (!invite) invite = (prompt("Invite code:") || "").trim();
+  if (!invite) invite = (prompt("Passcode:") || "").trim();
   if (!invite || !confirm(`Stop watching ${w ? w.name : "this page"} for everyone?`)) return;
   btn.disabled = true;
   try {
@@ -267,15 +267,20 @@ async function saveEdit(ev) {
 
 // Refresh only re-reads the list (checks run on GitHub's schedule), so once a minute is plenty.
 const REFRESH_COOLDOWN_S = 60;
+// The real limit is per IP in the Worker; this just keeps the button honest across page reloads.
+const REFRESH_KEY = "site-watch.refreshedAt";
 function refreshWithCooldown() {
-  const btn = $("#refresh");
-  btn.disabled = true;
+  store.set(REFRESH_KEY, String(Date.now()));
   load();
-  let left = REFRESH_COOLDOWN_S;
+  startRefreshCooldown();
+}
+function startRefreshCooldown() {
+  const btn = $("#refresh");
   const tick = () => {
-    if (left <= 0) { btn.disabled = false; btn.textContent = "Refresh"; return; }
-    btn.textContent = `Refresh (${left--}s)`;
-    setTimeout(tick, 1000);
+    const left = Math.ceil(REFRESH_COOLDOWN_S - (Date.now() - Number(store.get(REFRESH_KEY) || 0)) / 1000);
+    btn.disabled = left > 0;
+    btn.textContent = left > 0 ? `Refresh (${left}s)` : "Refresh";
+    if (left > 0) setTimeout(tick, 1000);
   };
   tick();
 }
@@ -288,6 +293,7 @@ async function boot() {
 
   $("#add").addEventListener("submit", addWatch);
   $("#refresh").addEventListener("click", refreshWithCooldown);
+  startRefreshCooldown();
   $("#watches").addEventListener("change", (e) => { if (e.target.matches(".alert")) toggleAlert(e.target); });
   $("#watches").addEventListener("click", (e) => {
     if (e.target.matches(".delete")) deleteWatch(e.target);
