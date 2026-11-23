@@ -1,5 +1,5 @@
 // Service worker: shows push alerts and keeps the app shell available offline.
-const CACHE = "site-watch-v11";   // cache name is internal: keep the prefix so old caches get cleaned up
+const CACHE = "site-watch-v12";   // cache name is internal: keep the prefix so old caches get cleaned up
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.json", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -13,10 +13,12 @@ self.addEventListener("activate", (e) => {
 });
 
 // Network first for our own files (so updates show up), cache as offline fallback. API calls are cross-origin: untouched.
+// cache: "no-cache" revalidates with the server; GitHub Pages sends max-age=600, so a plain fetch could hand
+// back a file up to 10 minutes stale right after a deploy.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
-  e.respondWith(fetch(e.request)
+  e.respondWith(fetch(e.request, { cache: "no-cache" })
     .then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
       return res;
