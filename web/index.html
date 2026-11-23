@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>site-watch</title>
+  <meta name="description" content="Get a notification when a web page changes.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="site-watch">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-192.png" alt="" width="32" height="32">
+    <h1>site-watch</h1>
+    <button id="refresh" class="ghost" type="button" title="Reload the list">Refresh</button>
+  </header>
+
+  <main>
+    <div id="ios-hint" class="hint" hidden>
+      <strong>On iPhone or iPad?</strong> Alerts only work from the Home Screen app.
+      Tap <span class="share" aria-label="Share">Share</span> then <em>Add to Home Screen</em>,
+      and open site-watch from there (iOS 16.4 or newer).
+    </div>
+    <div id="push-unsupported" class="hint" hidden>This browser can't receive push alerts. You can still see the list.</div>
+    <div id="msg" class="msg" role="status" hidden></div>
+
+    <section>
+      <h2>Watched pages</h2>
+      <p id="empty" class="muted" hidden>Nothing watched yet.</p>
+      <ul id="watches"></ul>
+    </section>
+
+    <section>
+      <h2>Add a page</h2>
+      <form id="add">
+        <label>Address <input name="url" type="text" inputmode="url" placeholder="example.com/news" required autocomplete="off"></label>
+        <label><span>Name <span class="muted">(optional)</span></span> <input name="name" type="text" maxlength="80" autocomplete="off"></label>
+        <details>
+          <summary>Noise filters</summary>
+          <label><span>Watch only this part <span class="muted">(CSS selector)</span></span> <input name="selector" type="text" placeholder="#prices, .article-list" autocomplete="off"></label>
+          <label>Only lines containing <input name="contains" type="text" autocomplete="off"></label>
+          <label><span>Ignore lines like <span class="muted">(one regex per line)</span></span> <textarea name="ignore" rows="3" placeholder="\d+ minutes? ago"></textarea></label>
+          <label>How to load
+            <select name="mode">
+              <option value="auto">Automatic</option>
+              <option value="plain">Plain download</option>
+              <option value="browser">Hidden browser (for JS-heavy sites)</option>
+              <option value="feed">RSS / Atom feed</option>
+            </select>
+          </label>
+        </details>
+        <label>Invite code <input name="invite" type="password" required autocomplete="off"></label>
+        <button type="submit">Add</button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="edit-dialog">
+    <form id="edit" method="dialog">
+      <h2>Edit <span class="title"></span></h2>
+      <label>Address <input name="url" type="text" inputmode="url" required autocomplete="off"></label>
+      <label>Name <input name="name" type="text" maxlength="80" autocomplete="off"></label>
+      <label><span>Watch only this part <span class="muted">(CSS selector)</span></span> <input name="selector" type="text" autocomplete="off"></label>
+      <label>Only lines containing <input name="contains" type="text" autocomplete="off"></label>
+      <label><span>Ignore lines like <span class="muted">(one regex per line)</span></span> <textarea name="ignore" rows="3"></textarea></label>
+      <label>How to load
+        <select name="mode">
+          <option value="auto">Automatic</option>
+          <option value="plain">Plain download</option>
+          <option value="browser">Hidden browser (for JS-heavy sites)</option>
+          <option value="feed">RSS / Atom feed</option>
+        </select>
+      </label>
+      <p class="muted small">Changing the address or filters makes the next check store a new baseline instead of alerting.</p>
+      <label>Invite code <input name="invite" type="password" required autocomplete="off"></label>
+      <div class="buttons">
+        <button type="button" class="ghost cancel">Cancel</button>
+        <button type="submit" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="watch-tpl">
+    <li class="watch">
+      <div class="row">
+        <a class="name" target="_blank" rel="noopener"></a>
+        <span class="badge"></span>
+      </div>
+      <div class="url muted"></div>
+      <div class="meta muted"></div>
+      <pre class="diff" hidden></pre>
+      <div class="error" hidden></div>
+      <div class="actions">
+        <label class="toggle"><input type="checkbox" class="alert"> <span>Alerts on this device</span></label>
+        <span class="buttons">
+          <button type="button" class="edit ghost">Edit</button>
+          <button type="button" class="delete ghost">Delete</button>
+        </span>
+      </div>
+    </li>
+  </template>
+</body>
+</html>

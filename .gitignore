@@ -1,0 +1,8 @@
+node_modules/
+.dev.vars
+.wrangler/
+state.json
+__pycache__/
+checker/.venv/
+checker/.env*
+web/test/*.png

@@ -1,0 +1,16 @@
+name = "site-watch"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+# Comma-separated origins allowed to call the API (the GitHub Pages URL + local dev).
+ALLOWED_ORIGINS = "https://zsolt-szavo.github.io,http://localhost:8000,http://127.0.0.1:8000"
+VAPID_PUBLIC_KEY = "BDHINJK7bO3xMpSf-WFTRrPRcy9gmKZX1sMNHwv570ex-iTsHRCu_LhgP_vxtHWgx7muJPB-Dfl9pHgr1OsIw04"
+MAX_WATCHES = "100"
+
+# Secrets (wrangler secret put …; locally in .dev.vars): INVITE_CODE, CHECKER_TOKEN
+
+[[d1_databases]]
+binding = "DB"
+database_name = "site-watch"
+database_id = "00000000-0000-0000-0000-000000000000" # replaced at deploy (phase 5)

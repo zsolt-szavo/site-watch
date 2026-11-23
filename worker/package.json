@@ -1,0 +1,12 @@
+{
+  "name": "site-watch-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:local": "wrangler d1 execute site-watch --local --file=schema.sql",
+    "db:remote": "wrangler d1 execute site-watch --remote --file=schema.sql",
+    "test": "bash test/smoke.sh"
+  },
+  "devDependencies": { "wrangler": "^4" }
+}

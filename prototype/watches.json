@@ -1,0 +1,14 @@
+[
+  {
+    "name": "HN newest (test)",
+    "url": "https://news.ycombinator.com/newest",
+    "topic": "set-NTFY_TOPIC-secret",
+    "priority": "default"
+  },
+  {
+    "name": "Rifugio Pian de Fontana",
+    "url": "http://www.piandefontana.it/",
+    "topic": "set-NTFY_TOPIC-secret",
+    "priority": "high"
+  }
+]
