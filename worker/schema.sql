@@ -40,3 +40,14 @@ CREATE TABLE IF NOT EXISTS shots (
   jpeg     BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS shots_by_watch ON shots(watch_id, kind);
+-- Versions of the page text, like the screenshot history: kind 'baseline' (the first check) or 'change' (a check
+-- that found a change, with its diff); the newest SHOT_HISTORY are kept. The newest one is what the page says now.
+CREATE TABLE IF NOT EXISTS text_versions (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  watch_id TEXT NOT NULL REFERENCES watches(id) ON DELETE CASCADE,
+  kind     TEXT NOT NULL CHECK (kind IN ('baseline', 'change')),
+  taken_at TEXT NOT NULL,
+  diff     TEXT,
+  text     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS text_versions_by_watch ON text_versions(watch_id);

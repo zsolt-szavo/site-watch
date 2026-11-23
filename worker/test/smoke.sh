@@ -87,6 +87,9 @@ check "history still 5"     "latest: change:+ new change:dC5 change:dC4 change:d
 check "text"                200 "$(req $API/api/watches/$ID/text "${D[@]}")"
 grep -q '"text":"t"' /tmp/sw_body && check "text body" 1 1 || check "text body" 1 0 "$(cat /tmp/sw_body)"
 check "text other device"   404 "$(req $API/api/watches/$ID/text "${O[@]}")"
+# Text versions follow the same history rule as the pictures: newest SHOT_HISTORY, newest first.
+tkinds() { req $API/api/watches/$ID/text "${D[@]}" >/dev/null; python3 -c 'import json;print(" ".join(v["kind"] + ":" + (v["diff"] or "") for v in json.load(open("/tmp/sw_body"))["versions"]))'; }
+check "text versions"       "change:+ new change:dC5 change:dC4 change:dC3 change:dC2" "$(tkinds)"
 # A blocked streak is remembered from its first blocked report until the next non-blocked one.
 since() { req $API/api/watches/$ID "${D[@]}" >/dev/null; python3 -c 'import json;print(json.load(open("/tmp/sw_body")).get("blocked_since") or "")'; }
 blk() { req -X POST $API/api/internal/report -H "$TA" -d '{"results":[{"id":"'$ID'","error":"'"$1"'"}]}' >/dev/null; }
@@ -109,6 +112,7 @@ check "home_ok in list" 1 "$(req $API/api/watches/$ID "${D[@]}" >/dev/null; pyth
 check "blocked_since cleared" "" "$(since)"
 check "patch filter"        200 "$(req -X PATCH $API/api/watches/$ID "${D[@]}" -d '{"contains":"x"}')"
 check "re-baseline drops shots" "" "$(kinds)"
+check "re-baseline drops text versions" "" "$(tkinds)"
 check "delete"              200 "$(req -X DELETE $API/api/watches/$ID "${D[@]}")"
 check "gone"                404 "$(req $API/api/watches/$ID "${D[@]}")"
 # Per-device cap: 5 fit, the 6th is refused; then clean up.

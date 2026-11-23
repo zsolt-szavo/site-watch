@@ -6,7 +6,8 @@
 //           GET  /api/watches/:id/shots          [{id, kind, taken_at, diff}] newest first: the latest check,
 //                                                then up to SHOT_HISTORY changes / the first baseline
 //           GET  /api/watches/:id/shots/:shotId  image/jpeg
-//           GET  /api/watches/:id/text           {text, checked}: the page text as last read
+//           GET  /api/watches/:id/text           {text, checked, versions: [{id, kind, taken_at, diff, text}]}: the page
+//                                                text as last read, and its versions newest first (as for shots)
 //           Every watch route needs header X-Device-Id: each device only sees and changes its own watches.
 //           POST /api/subscribe          {watch_id, subscription}
 //           POST /api/unsubscribe        {watch_id, endpoint}
@@ -153,6 +154,33 @@ function shotStmts(env, r, t, bytes) {
   ];
 }
 
+// Statements that file the page text of a successful check as a version, like shotStmts. They run before the
+// watch row is updated, so a watch that has text but no versions yet (checked before versions were kept) first
+// gets its current text filed, dated from its last change or, never changed, its creation (≈ its first check).
+function textStmts(env, r, t) {
+  const hist = "SELECT 1 FROM text_versions WHERE watch_id = ?1";
+  const text = String(r.text ?? "");
+  return [
+    env.DB.prepare(
+      `INSERT INTO text_versions (watch_id, kind, taken_at, diff, text)
+       SELECT id, CASE WHEN last_change IS NULL THEN 'baseline' ELSE 'change' END, COALESCE(last_change, created_at),
+              CASE WHEN last_change IS NULL THEN NULL ELSE last_diff END, last_text
+       FROM watches WHERE id = ?1 AND last_text IS NOT NULL AND NOT EXISTS (${hist})`).bind(r.id),
+    r.changed
+      ? env.DB.prepare(
+        `INSERT INTO text_versions (watch_id, kind, taken_at, diff, text)
+         SELECT ?1, 'change', ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?1)`)
+        .bind(r.id, t, String(r.diff || "").slice(0, 4000), text)
+      : env.DB.prepare(   // first check (or first since a re-baseline)
+        `INSERT INTO text_versions (watch_id, kind, taken_at, diff, text)
+         SELECT ?1, 'baseline', ?2, NULL, ?3 WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?1) AND NOT EXISTS (${hist})`)
+        .bind(r.id, t, text),
+    env.DB.prepare(
+      `DELETE FROM text_versions WHERE watch_id = ?1 AND id NOT IN
+       (SELECT id FROM text_versions WHERE watch_id = ?1 ORDER BY id DESC LIMIT ?2)`).bind(r.id, shotHistory(env)),
+  ];
+}
+
 async function getWatch(env, id, dev) {
   const row = await env.DB.prepare(
     `SELECT ${PUBLIC_COLS}, (SELECT COUNT(*) FROM subscriptions s WHERE s.watch_id = w.id) AS subscribers
@@ -283,8 +311,12 @@ async function route(req, env) {
 
   if (m === "GET" && textMatch) {
     await getWatch(env, textMatch[1], deviceId(req));
-    const row = await env.DB.prepare("SELECT last_text, last_checked FROM watches WHERE id = ?").bind(textMatch[1]).first();
-    return json({ text: row.last_text || "", checked: row.last_checked });
+    const [row, { results: versions }] = await env.DB.batch([
+      env.DB.prepare("SELECT last_text, last_checked FROM watches WHERE id = ?").bind(textMatch[1]),
+      env.DB.prepare("SELECT id, kind, taken_at, diff, text FROM text_versions WHERE watch_id = ? ORDER BY id DESC")
+        .bind(textMatch[1]),
+    ]).then(([a, b]) => [a.results[0], b]);
+    return json({ text: row.last_text || "", checked: row.last_checked, versions });
   }
 
   if (m === "GET" && shotsMatch) {
@@ -324,7 +356,8 @@ async function route(req, env) {
       const sets = keys.map((k) => `${k} = ?`).concat(reset ? ["last_hash = NULL", "last_text = NULL", "last_error = NULL"] : []);
       const stmts = [env.DB.prepare(`UPDATE watches SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map((k) => f[k]), idMatch[1])];
       // The old pictures show what we no longer look at; the next check starts a new history with its baseline.
-      if (reset) stmts.push(env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]));
+      if (reset) stmts.push(env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]),
+        env.DB.prepare("DELETE FROM text_versions WHERE watch_id = ?").bind(idMatch[1]));
       await env.DB.batch(stmts);
     }
     return json(await getWatch(env, idMatch[1], dev));
@@ -335,6 +368,7 @@ async function route(req, env) {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM subscriptions WHERE watch_id = ?").bind(idMatch[1]),
       env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]),
+      env.DB.prepare("DELETE FROM text_versions WHERE watch_id = ?").bind(idMatch[1]),
       env.DB.prepare("DELETE FROM meta WHERE k IN (?, ?)").bind(`blocked_since:${idMatch[1]}`, `home_ok:${idMatch[1]}`),
       env.DB.prepare("DELETE FROM watches WHERE id = ?").bind(idMatch[1]),
     ]);
@@ -420,6 +454,7 @@ async function route(req, env) {
       if (b.via === "home" && !r.error)
         stmts.push(env.DB.prepare("INSERT OR REPLACE INTO meta (k, v) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?)")
           .bind(`home_ok:${r.id}`, t, r.id));
+      if (!r.error) stmts.push(...textStmts(env, r, t));   // before the UPDATE below: it reads the previous text
       if (r.error) {
         stmts.push(env.DB.prepare("UPDATE watches SET last_checked = ?, last_error = ? WHERE id = ?")
           .bind(t, String(r.error).slice(0, 500), r.id));
