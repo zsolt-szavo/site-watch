@@ -228,13 +228,22 @@ const shotItems = (items) => {
 };
 // [bold label, muted detail]. The top picture is the current version; its detail says since when the page
 // looks like that ("unchanged since first check …" / "changed …"), older ones say when they appeared.
-const shotCaption = (s) => {
+// The page text uses the same captions ("read" instead of "pictured" when there is no version yet).
+const shotCaption = (s, seen = "pictured") => {
   const v = s.now ? s.since : s;
   const start = !v ? "" : v.kind === "baseline" ? `${s.now ? "unchanged since first check" : ""} ${when(v.taken_at)}`.trim()
     : `changed ${when(v.taken_at)}`;
-  if (s.now) return ["Current version", start || `pictured ${when(s.taken_at)}`];
+  if (s.now) return ["Current version", start || `${seen} ${when(s.taken_at)}`];
   return [s.kind === "baseline" ? "First check" : "Earlier version", start];
 };
+
+function caption(label, detail) {
+  const cap = document.createElement("figcaption");
+  cap.innerHTML = "<b></b> <span></span>";
+  cap.firstChild.textContent = label;
+  cap.lastChild.textContent = detail;
+  return cap;
+}
 
 function shotUrl(watchId, shotId) {
   if (!shotUrls.has(shotId)) {
@@ -277,10 +286,7 @@ async function showShots(li, w) {
     const img = document.createElement("img");
     img.alt = "";
     btn.append(img);
-    const cap = document.createElement("figcaption");
-    cap.innerHTML = "<b></b> <span></span>";
-    cap.firstChild.textContent = label;
-    cap.lastChild.textContent = detail;
+    const cap = caption(label, detail);
     const frame = document.createElement("div");
     frame.className = "shot-frame";
     frame.append(btn);
@@ -291,26 +297,42 @@ async function showShots(li, w) {
 }
 
 // ---------- page text ----------
-// The page text as the checker last read it (what changes are detected on), in a scroll box.
-const texts = new Map();   // watch id -> {key, text}
+// The page text as the checker reads it (what changes are detected on), versioned like the pictures: the
+// current version on top, each earlier one below it, each in a scroll box.
+const texts = new Map();   // watch id -> {key, text, checked, versions}
+
+// Like shotItems: the newest version is what the page says now; the latest text read stands in for it.
+const textItems = (t) => {
+  const [current, ...older] = t.versions || [];
+  return [{ now: true, since: current, taken_at: t.checked, text: t.text || current?.text || "" }, ...older];
+};
 
 async function showText(li, w) {
   setView(li, "text");
-  const pre = $(".page-text", li);
+  const box = $(".text-versions", li), note = $(".text-note", li);
+  const status = (s) => { note.textContent = s; note.hidden = !s; };
   const key = w.last_checked;
   let t = texts.get(w.id);
   if (!t || t.key !== key) {
-    if (!t) pre.textContent = "Loading text…";
+    if (!t) status("Loading text…");
     try {
-      t = { key, text: (await api(`/api/watches/${encodeURIComponent(w.id)}/text`)).text };
+      t = { key, ...(await api(`/api/watches/${encodeURIComponent(w.id)}/text`)) };
       texts.set(w.id, t);
+      status("");
     } catch (e) {
-      pre.textContent = `Couldn't load the text: ${e.message}`;
+      status(`Couldn't load the text: ${e.message}`);
       return;
     }
     if (!li.isConnected) return;
   }
-  pre.textContent = t.text || "(no text read yet)";
+  box.replaceChildren(...textItems(t).map((v) => {
+    const fig = document.createElement("figure");
+    const pre = document.createElement("pre");
+    pre.className = "page-text";
+    pre.textContent = v.text || "(no text read yet)";
+    fig.append(caption(...shotCaption(v, "read")), pre);
+    return fig;
+  }));
 }
 
 async function enlargeShot(btn) {

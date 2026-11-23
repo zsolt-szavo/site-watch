@@ -35,6 +35,7 @@ jobs:
             echo "::error::Repo secret CLOUDFLARE_API_TOKEN is not set, so the Worker was not deployed (see worker.yml header)."
             exit 1
           fi
+          npx wrangler d1 execute site-watch --remote --file=schema.sql   # idempotent: adds new tables first
           npx wrangler deploy
       # The Worker can't read GitHub secrets, so copy the ones it needs into its own Cloudflare secrets.
       - name: Sync Worker secrets
