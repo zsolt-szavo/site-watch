@@ -198,7 +198,7 @@ class Push(unittest.TestCase):
 
         w = {"id": "a", "name": "Site", "url": "https://example.com/",
              "subscriptions": [{"endpoint": f"{base}/ok", "keys": keys}, {"endpoint": f"{base}/gone", "keys": keys}]}
-        dead = check.send_push(w, "➕ new line", vapid_b64, "https://example.com")
+        dead = check.send_push(w, vapid_b64, "https://example.com")
         srv.shutdown()
 
         self.assertEqual(dead, [f"{base}/gone"])
@@ -206,7 +206,7 @@ class Push(unittest.TestCase):
         self.assertEqual(path, "/ok")
         self.assertIn("vapid", headers["Authorization"].lower())
         msg = json.loads(http_ece.decrypt(body, private_key=client, auth_secret=auth, version="aes128gcm"))
-        self.assertEqual(msg, {"title": "Changed: Site", "body": "➕ new line", "url": "https://example.com/", "watch_id": "a"})
+        self.assertEqual(msg, {"title": "New version for example.com", "body": "Site", "url": "https://example.com/", "watch_id": "a"})
 
 
 if __name__ == "__main__":

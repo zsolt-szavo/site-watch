@@ -360,12 +360,14 @@ def compare(w, lines):
     return {**base, "changed": True, "diff": summarize(w.get("last_text") or "", text)}
 
 
-def send_push(w, diff, vapid_key, subject):
+def send_push(w, vapid_key, subject):
     """Push to every subscriber. Returns endpoints the push service says are gone."""
     from pywebpush import WebPushException, webpush
+    host = urlsplit(w["url"]).hostname or w["url"]
+    host = host[4:] if host.startswith("www.") else host
     payload = json.dumps({
-        "title": f"Changed: {w['name']}",
-        "body": diff[:1000],
+        "title": f"New version for {host}",
+        "body": w["name"] if w["name"] != host else "Tap to open the page.",
         "url": w["url"],
         "watch_id": w["id"],
     }, ensure_ascii=False)
@@ -463,7 +465,7 @@ def run(api, token, vapid_key, subject, dry_run=False, no_shots=False):
             subs = len(w.get("subscriptions") or [])
             print(f"[{w['name']}] CHANGED ({via}), pushing to {subs}\n{res['diff']}")
             if subs and not dry_run:
-                dead.update(send_push(w, res["diff"], vapid_key, subject))
+                dead.update(send_push(w, vapid_key, subject))
 
     if dry_run:
         print("dry run: nothing reported")
