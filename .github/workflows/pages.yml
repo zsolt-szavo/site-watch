@@ -12,15 +12,23 @@ concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
-  deploy:
+  # Upload and deploy are separate jobs (GitHub's Pages starter layout): the artifact list is eventually
+  # consistent, so deploy-pages in the same job as the upload sometimes sees no "github-pages" artifact.
+  # It also makes "Re-run failed jobs" re-run only deploy; re-running a combined job uploads a second
+  # artifact and deploy-pages then refuses the duplicate.
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4
