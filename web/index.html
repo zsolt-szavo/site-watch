@@ -102,6 +102,14 @@
     </form>
   </dialog>
 
+  <dialog id="shot-dialog">
+    <form method="dialog">
+      <div class="row"><h2 class="title"></h2><button class="ghost" value="close">Close</button></div>
+      <img alt="">
+      <pre class="diff" hidden></pre>
+    </form>
+  </dialog>
+
   <template id="watch-tpl">
     <li class="watch">
       <div class="row">
@@ -109,7 +117,9 @@
         <span class="badge"></span>
       </div>
       <div class="url muted"></div>
-      <div class="meta muted"></div>
+      <div class="meta muted"><span class="meta-text"></span>
+        <button type="button" class="shots-toggle" aria-expanded="false" hidden>Pictures <span aria-hidden="true">▾</span></button></div>
+      <div class="shots" hidden><p class="shots-note muted small"></p><div class="shots-row"></div></div>
       <pre class="diff" hidden></pre>
       <div class="error" hidden></div>
       <div class="actions">

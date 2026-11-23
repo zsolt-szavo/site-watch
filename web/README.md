@@ -16,6 +16,9 @@ cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` r
   or *running* (checker fetched its jobs, hasn't reported) a banner shows elapsed time and polls every 10 s while visible.
   When it ends the list is re-read at once. The server's `available_at` also syncs the *Check now* countdown across devices.
 - Phones (≤ 520 px): Refresh shrinks to ↻ (plus countdown), "Add page" to "+ Add"; touch screens get ≥ 40 px buttons.
+- *Pictures ▾* on a card's meta line (when the checker has screenshots) opens a row of thumbnails, newest first:
+  *Now* (latest check), then each *Changed* check and the *First check*, newest 5 kept (`GET /api/watches/:id/shots`).
+  Images need `X-Device-Id`, so they're fetched and shown as blob URLs; tapping one opens it full size with that change's diff.
 - ↑/↓ on a card reorders the list; the order is per device, kept in localStorage (`site-watch.order`), new watches go on top.
 - `sw.js`: shows push `{title, body, url, watch_id}` (tag = watch_id, so a newer alert replaces the older one),
   opens `url` on click, caches the app shell (network first). Bump `CACHE` when changing shell files.

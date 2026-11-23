@@ -3,6 +3,9 @@
 //           POST /api/watches            {url, name?, selector?, contains?, ignore?, mode?}
 //           PATCH /api/watches/:id       same fields
 //           DELETE /api/watches/:id
+//           GET  /api/watches/:id/shots          [{id, kind, taken_at, diff}] newest first: the latest check,
+//                                                then up to SHOT_HISTORY changes / the first baseline
+//           GET  /api/watches/:id/shots/:shotId  image/jpeg
 //           Every watch route needs header X-Device-Id: each device only sees and changes its own watches.
 //           POST /api/subscribe          {watch_id, subscription}
 //           POST /api/unsubscribe        {watch_id, endpoint}
@@ -98,11 +101,47 @@ function cleanFields(input, partial = false) {
 }
 
 const PUBLIC_COLS =
-  "w.id, w.url, w.name, w.selector, w.contains, w.ignore, w.mode, w.created_at, w.last_checked, w.last_change, w.last_diff, w.last_error";
+  "w.id, w.url, w.name, w.selector, w.contains, w.ignore, w.mode, w.created_at, w.last_checked, w.last_change, w.last_diff, w.last_error, " +
+  "(SELECT COUNT(*) FROM shots WHERE watch_id = w.id) AS shot_count";
 
 function publicWatch(row) {
   if (!row) return row;
-  return { ...row, ignore: JSON.parse(row.ignore || "[]") };
+  return { ...row, ignore: JSON.parse(row.ignore || "[]"), has_shots: row.shot_count > 0 };
+}
+
+// ---------- screenshots ----------
+const MAX_SHOT_BYTES = 1_000_000;   // D1 rows max out at 2 MB; the checker aims for < 900 kB
+
+// Base64 JPEG from the checker -> bytes, or null when it isn't a plausible JPEG.
+export function decodeShot(b64) {
+  if (typeof b64 !== "string" || !b64 || b64.length > Math.ceil(MAX_SHOT_BYTES / 3) * 4) return null;
+  let bin;
+  try { bin = atob(b64); } catch { return null; }
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? bytes : null;
+}
+
+const shotHistory = (env) => Number(env.SHOT_HISTORY || 5);
+
+// Statements that file one checker screenshot. Each is skipped when the watch was deleted while the check
+// ran (the foreign key would otherwise fail the whole report batch).
+function shotStmts(env, r, t, bytes) {
+  const live = "EXISTS (SELECT 1 FROM watches WHERE id = ?1)";
+  const hist = "SELECT 1 FROM shots WHERE watch_id = ?1 AND kind != 'latest'";
+  const ins = (kind, cond, diff = null) => env.DB.prepare(
+    `INSERT INTO shots (watch_id, kind, taken_at, diff, jpeg) SELECT ?1, '${kind}', ?2, ?3, ?4 WHERE ${cond}`)
+    .bind(r.id, t, diff, bytes);
+  return [
+    env.DB.prepare("DELETE FROM shots WHERE watch_id = ? AND kind = 'latest'").bind(r.id),
+    ins("latest", live),
+    r.changed
+      ? ins("change", live, String(r.diff || "").slice(0, 4000))
+      : ins("baseline", `${live} AND NOT EXISTS (${hist})`),   // first check (or first since a re-baseline)
+    env.DB.prepare(
+      `DELETE FROM shots WHERE watch_id = ?1 AND kind != 'latest' AND id NOT IN
+       (SELECT id FROM shots WHERE watch_id = ?1 AND kind != 'latest' ORDER BY id DESC LIMIT ?2)`)
+      .bind(r.id, shotHistory(env)),
+  ];
 }
 
 async function getWatch(env, id, dev) {
@@ -203,6 +242,7 @@ async function route(req, env) {
   const path = url.pathname.replace(/\/+$/, "");
   const m = req.method;
   const idMatch = path.match(/^\/api\/watches\/([\w-]+)$/);
+  const shotsMatch = path.match(/^\/api\/watches\/([\w-]+)\/shots(?:\/(\d+))?$/);
 
   // Per-IP rate limit on the public API (the checker's internal routes have their own token).
   if (env.API_LIMIT && !path.startsWith("/api/internal/")) {
@@ -222,6 +262,25 @@ async function route(req, env) {
   }
 
   if (m === "GET" && idMatch) return json(await getWatch(env, idMatch[1], deviceId(req)));
+
+  if (m === "GET" && shotsMatch && !shotsMatch[2]) {
+    await getWatch(env, shotsMatch[1], deviceId(req));
+    const { results } = await env.DB.prepare(
+      `SELECT id, kind, taken_at, diff FROM shots WHERE watch_id = ?
+       ORDER BY kind = 'latest' DESC, id DESC`).bind(shotsMatch[1]).all();
+    return json(results);
+  }
+
+  if (m === "GET" && shotsMatch) {
+    await getWatch(env, shotsMatch[1], deviceId(req));
+    const row = await env.DB.prepare("SELECT jpeg FROM shots WHERE id = ? AND watch_id = ?")
+      .bind(Number(shotsMatch[2]), shotsMatch[1]).first();
+    if (!row) throw new HttpError(404, "screenshot not found");
+    // A shot id never changes content, so the browser may keep it.
+    return new Response(new Uint8Array(row.jpeg), {
+      headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=31536000, immutable" },
+    });
+  }
 
   if (m === "POST" && path === "/api/watches") {
     const dev = deviceId(req);
@@ -247,7 +306,10 @@ async function route(req, env) {
       // Changing what we look at invalidates the baseline, so the next check re-baselines silently.
       const reset = keys.some((k) => ["url", "selector", "contains", "ignore", "mode"].includes(k));
       const sets = keys.map((k) => `${k} = ?`).concat(reset ? ["last_hash = NULL", "last_text = NULL", "last_error = NULL"] : []);
-      await env.DB.prepare(`UPDATE watches SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map((k) => f[k]), idMatch[1]).run();
+      const stmts = [env.DB.prepare(`UPDATE watches SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map((k) => f[k]), idMatch[1])];
+      // The old pictures show what we no longer look at; the next check starts a new history with its baseline.
+      if (reset) stmts.push(env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]));
+      await env.DB.batch(stmts);
     }
     return json(await getWatch(env, idMatch[1], dev));
   }
@@ -256,6 +318,7 @@ async function route(req, env) {
     await getWatch(env, idMatch[1], deviceId(req));
     await env.DB.batch([
       env.DB.prepare("DELETE FROM subscriptions WHERE watch_id = ?").bind(idMatch[1]),
+      env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]),
       env.DB.prepare("DELETE FROM watches WHERE id = ?").bind(idMatch[1]),
     ]);
     return json({ ok: true });
@@ -335,6 +398,8 @@ async function route(req, env) {
           "UPDATE watches SET last_checked = ?, last_hash = ?, last_text = ?, last_error = NULL WHERE id = ?")
           .bind(t, r.hash, r.text, r.id));
       }
+      const shot = r.error ? null : decodeShot(r.shot);
+      if (shot) stmts.push(...shotStmts(env, r, t, shot));
     }
     for (const endpoint of b.dead_endpoints || [])
       stmts.push(env.DB.prepare("DELETE FROM subscriptions WHERE endpoint = ?").bind(String(endpoint)));

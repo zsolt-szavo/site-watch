@@ -28,3 +28,15 @@ CREATE TABLE IF NOT EXISTS meta (   -- small key/value state, e.g. last_dispatch
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL
 );
+-- Page screenshots from the checker. kind: 'baseline' (first check), 'change' (a check that found a change,
+-- with its diff), 'latest' (the most recent check, one per watch). Baseline + changes form the history, of
+-- which the newest SHOT_HISTORY are kept. Kept out of `watches` so the list query stays small.
+CREATE TABLE IF NOT EXISTS shots (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  watch_id TEXT NOT NULL REFERENCES watches(id) ON DELETE CASCADE,
+  kind     TEXT NOT NULL CHECK (kind IN ('baseline', 'change', 'latest')),
+  taken_at TEXT NOT NULL,
+  diff     TEXT,
+  jpeg     BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS shots_by_watch ON shots(watch_id, kind);

@@ -149,7 +149,9 @@ function render() {
     badge.className = `badge ${cls}`;
     badge.textContent = label;
     const meta = $(".meta", li);
-    meta.textContent = metaLine(w);
+    $(".meta-text", meta).textContent = metaLine(w);
+    $(".shots-toggle", li).hidden = !w.has_shots;
+    if (w.has_shots && openShots.has(w.id)) showShots(li, w);
     meta.title = `Checked: ${w.last_checked || "not yet"}\nLast change: ${w.last_change || "none seen yet"}`;
     if (w.last_diff) { const d = $(".diff", li); d.textContent = w.last_diff; d.hidden = false; }
     if (w.last_error) { const e = $(".error", li); e.textContent = w.last_error; e.hidden = false; }
@@ -159,6 +161,102 @@ function render() {
     if (!canPush) $(".toggle", li).title = isIOS ? "Add to Home Screen first" : "Push alerts aren't supported here";
     list.append(li);
   });
+}
+
+// ---------- screenshots ----------
+// The checker pictures every page. Per watch the server keeps the latest one ("Now") plus a history: the
+// first check and each change, newest SHOT_HISTORY. The ▾ on the meta line opens that list; images need
+// the X-Device-Id header, so they are fetched and shown as blob URLs. A shot id's image never changes.
+const openShots = new Set();   // watch ids whose picture list is open (survives the list re-render)
+const shotLists = new Map();   // watch id -> {key, items}; key changes when a new check reported
+const shotUrls = new Map();    // shot id -> blob URL (or a promise of one)
+
+const when = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const shotLabel = (s) => s.kind === "latest" ? "Now" : s.kind === "change" ? "Changed" : "First check";
+
+function shotUrl(watchId, shotId) {
+  if (!shotUrls.has(shotId)) {
+    shotUrls.set(shotId, fetch(`${API}/api/watches/${encodeURIComponent(watchId)}/shots/${shotId}`,
+      { headers: { "X-Device-Id": DEVICE_ID } })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
+      .then((b) => { const u = URL.createObjectURL(b); shotUrls.set(shotId, u); return u; })
+      .catch((e) => { shotUrls.delete(shotId); throw e; }));
+  }
+  return Promise.resolve(shotUrls.get(shotId));
+}
+
+async function showShots(li, w) {
+  const panel = $(".shots", li), row = $(".shots-row", panel), note = $(".shots-note", panel);
+  const toggle = $(".shots-toggle", li);
+  toggle.setAttribute("aria-expanded", "true");
+  $("span", toggle).textContent = "▴";
+  panel.hidden = false;
+  const key = `${w.last_checked}|${w.shot_count}`;
+  let list = shotLists.get(w.id), waited = false;
+  if (!list || list.key !== key) {
+    waited = true;
+    if (!list) note.textContent = "Loading pictures…";
+    try {
+      list = { key, items: await api(`/api/watches/${encodeURIComponent(w.id)}/shots`) };
+      shotLists.set(w.id, list);
+    } catch (e) {
+      note.textContent = `Couldn't load the pictures: ${e.message}`;
+      return;
+    }
+  }
+  if (waited && !li.isConnected) return;   // the list was redrawn meanwhile; the new card loads its own
+  const changes = list.items.filter((s) => s.kind === "change").length;
+  note.textContent = changes ? `Latest check, then ${changes > 1 ? `the last ${changes} changes` : "the last change"}. Tap one to enlarge.`
+    : "Latest check and the first one. Tap one to enlarge.";
+  row.replaceChildren(...list.items.map((s) => {
+    const fig = document.createElement("figure");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "shot";
+    btn.dataset.shot = s.id;
+    btn.setAttribute("aria-label", `${shotLabel(s)}, ${when(s.taken_at)}: enlarge`);
+    const img = document.createElement("img");
+    img.alt = "";
+    btn.append(img);
+    const cap = document.createElement("figcaption");
+    cap.innerHTML = "<b></b><span></span>";
+    cap.firstChild.textContent = shotLabel(s);
+    cap.lastChild.textContent = when(s.taken_at);
+    fig.append(btn, cap);
+    shotUrl(w.id, s.id).then((u) => { img.src = u; }, () => { btn.classList.add("broken"); });
+    return fig;
+  }));
+}
+
+function toggleShots(btn) {
+  const li = btn.closest(".watch");
+  const w = watches.find((x) => x.id === li.dataset.id);
+  if (!w) return;
+  if (openShots.has(w.id)) {
+    openShots.delete(w.id);
+    btn.setAttribute("aria-expanded", "false");
+    $("span", btn).textContent = "▾";
+    $(".shots", li).hidden = true;
+  } else {
+    openShots.add(w.id);
+    showShots(li, w);
+  }
+}
+
+async function enlargeShot(btn) {
+  const w = watches.find((x) => x.id === btn.closest(".watch").dataset.id);
+  const s = w && (shotLists.get(w.id)?.items || []).find((x) => String(x.id) === btn.dataset.shot);
+  if (!s) return;
+  const d = $("#shot-dialog");
+  $(".title", d).textContent = `${w.name} · ${shotLabel(s)} ${when(s.taken_at)}`;
+  const diff = $(".diff", d);
+  diff.textContent = s.diff || "";
+  diff.hidden = !s.diff;
+  const img = $("img", d);
+  img.removeAttribute("src");
+  img.alt = `Screenshot of ${w.name}, ${when(s.taken_at)}`;
+  d.showModal();
+  try { img.src = await shotUrl(w.id, s.id); } catch (e) { say(`Couldn't load the picture: ${e.message}`, true); }
 }
 
 async function load() {
@@ -460,7 +558,11 @@ async function boot() {
     if (e.target.matches(".move")) move(e.target);
     else if (e.target.matches(".delete")) deleteWatch(e.target);
     else if (e.target.matches(".edit")) openEdit(e.target);
+    else if (e.target.closest(".shots-toggle")) toggleShots(e.target.closest(".shots-toggle"));
+    else if (e.target.closest(".shot")) enlargeShot(e.target.closest(".shot"));
   });
+  // Tap outside the picture (on the backdrop) closes it too.
+  $("#shot-dialog").addEventListener("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   $("#edit").addEventListener("submit", saveEdit);
   $("#edit .cancel").addEventListener("click", () => $("#edit-dialog").close());
 

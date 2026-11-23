@@ -107,6 +107,68 @@ class Fetching(unittest.TestCase):
         self.assertEqual(f.get("https://a.it/")[0], 429)
 
 
+class Shots(unittest.TestCase):
+    def test_with_shot(self):
+        r = {"id": "a", "changed": False}
+        self.assertEqual(check.with_shot(r, None), r)
+        self.assertEqual(base64.b64decode(check.with_shot(r, b"\xff\xd8jpeg")["shot"]), b"\xff\xd8jpeg")
+
+    def test_screenshot_quality_fallback(self):
+        class Page:
+            def __init__(self, sizes): self.sizes, self.qualities = sizes, []
+            def screenshot(self, type, quality, timeout):
+                self.qualities.append(quality)
+                return b"x" * self.sizes.pop(0)
+        p = Page([10])
+        self.assertEqual(check.screenshot(p), b"x" * 10)
+        self.assertEqual(p.qualities, [60])
+        p = Page([check.MAX_SHOT_BYTES + 1, 20])
+        self.assertEqual(check.screenshot(p), b"x" * 20)
+        self.assertEqual(p.qualities, [60, 35])
+        self.assertIsNone(check.screenshot(Page([check.MAX_SHOT_BYTES + 1] * 2)))
+
+    def test_browser_shot_reuses_load_and_survives_errors(self):
+        b = check.Browser()
+        loads = []
+        def fake_get(url):
+            loads.append(url)
+            if "bad" in url:
+                raise RuntimeError("net::ERR")
+            b.shots[url] = b"jpeg:" + url.encode()
+            return 200, "<p>x</p>"
+        b._get = fake_get
+        b.get("https://a.it/")                       # browser-mode check
+        self.assertEqual(b.shot("https://a.it/"), b"jpeg:https://a.it/")
+        self.assertEqual(b.shot("https://b.it/"), b"jpeg:https://b.it/")   # plain-mode page: loaded for its picture
+        self.assertIsNone(b.shot("https://bad.it/"))
+        self.assertEqual(loads, ["https://a.it/", "https://b.it/", "https://bad.it/"])
+
+    @unittest.skipUnless(__import__("importlib").util.find_spec("playwright"), "playwright not installed")
+    def test_real_browser_screenshot(self):
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(PAGE.encode())
+            def log_message(self, *a):
+                pass
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        b = check.Browser()
+        try:
+            jpeg = b.shot(f"http://127.0.0.1:{srv.server_port}/")
+        except Exception as e:  # browser binary missing locally
+            self.skipTest(f"no chromium: {e}")
+        finally:
+            b.close()
+            srv.shutdown()
+        if jpeg is None and b.cache and isinstance(next(iter(b.cache.values())), Exception):
+            self.skipTest(f"no chromium: {next(iter(b.cache.values()))}")
+        self.assertTrue(jpeg.startswith(b"\xff\xd8\xff"))
+        self.assertLess(len(jpeg), check.MAX_SHOT_BYTES)
+
+
 class Push(unittest.TestCase):
     """Real pywebpush call against a local push endpoint; decrypts the payload like a browser would."""
 

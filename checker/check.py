@@ -9,7 +9,9 @@ Env:
 
   python check.py            # one full run
   python check.py --dry-run  # fetch + diff + print, no push, no report
+  python check.py --no-shots # skip the page screenshots
 """
+import base64
 import concurrent.futures as cf
 import difflib
 import hashlib
@@ -37,6 +39,10 @@ EXTRACT_VERSION = "x2"  # x2: relative timestamps scrubbed
 MIN_TEXT = 200          # auto mode: less visible text than this ⇒ probably JS-rendered, retry in a browser
 MAX_TEXT = 200_000      # cap what we store in D1
 TIMEOUT = 30
+# Screenshot of every watched page (shown in the app next to the one from the last change).
+SHOT_VIEWPORT = {"width": 1280, "height": 900}
+SHOT_QUALITY = (60, 35)       # JPEG quality; the lower one is a retry when the first is too big
+MAX_SHOT_BYTES = 900_000      # the Worker stores each in a D1 row (2 MB limit) and rejects bigger ones
 # Many sites rate-limit per IP, and GitHub's runners share theirs. So one run downloads each URL once,
 # spaces requests to the same site, and retries a 429/503 once after the site's Retry-After.
 HOST_GAP = 3.0          # seconds between two requests to the same site
@@ -225,11 +231,15 @@ class Fetcher:
 
 
 class Browser:
-    """Lazily started headless Chromium, shared across watches. Not thread-safe: use from one thread."""
+    """Lazily started headless Chromium, shared across watches. Not thread-safe: use from one thread.
+
+    Every page it loads is also screenshotted (viewport JPEG), so a watch the browser already checked
+    costs nothing extra in shot(); a plain-mode watch gets one browser load just for its picture.
+    """
 
     def __init__(self, fetcher=None):
         self.pw = self.browser = None
-        self.fetcher, self.cache = fetcher, {}
+        self.fetcher, self.cache, self.shots = fetcher, {}, {}
 
     def get(self, url):
         if url not in self.cache:
@@ -244,12 +254,20 @@ class Browser:
             raise r
         return r
 
+    def shot(self, url):
+        """JPEG bytes of the page, or None when it couldn't be loaded or pictured."""
+        try:
+            self.get(url)
+        except Exception:
+            return None
+        return self.shots.get(url)
+
     def _get(self, url):
         if self.browser is None:
             from playwright.sync_api import sync_playwright
             self.pw = sync_playwright().start()
             self.browser = self.pw.chromium.launch()
-        ctx = self.browser.new_context(user_agent=UA, locale="en-US")
+        ctx = self.browser.new_context(user_agent=UA, locale="en-US", viewport=SHOT_VIEWPORT)
         try:
             page = ctx.new_page()
             resp = page.goto(url, timeout=TIMEOUT * 1000, wait_until="domcontentloaded")
@@ -257,7 +275,12 @@ class Browser:
                 page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:
                 pass  # long-polling sites never go idle; take what we have
-            return (resp.status if resp else 0), page.content()
+            html = page.content()
+            try:
+                self.shots[url] = screenshot(page)
+            except Exception as e:
+                print(f"  screenshot failed for {url}: {(str(e) or type(e).__name__).splitlines()[0]}")
+            return (resp.status if resp else 0), html
         finally:
             ctx.close()
 
@@ -266,6 +289,15 @@ class Browser:
             self.browser.close()
         if self.pw:
             self.pw.stop()
+
+
+def screenshot(page):
+    """Viewport JPEG, retried at lower quality when too big; None when it never fits."""
+    for q in SHOT_QUALITY:
+        jpeg = page.screenshot(type="jpeg", quality=q, timeout=TIMEOUT * 1000)
+        if len(jpeg) <= MAX_SHOT_BYTES:
+            return jpeg
+    return None
 
 
 def extract(w, status, body):
@@ -355,7 +387,13 @@ def send_push(w, diff, vapid_key, subject):
 
 # ---------------------------------------------------------------- main
 
-def run(api, token, vapid_key, subject, dry_run=False):
+def with_shot(result, jpeg):
+    """Attach the page's screenshot (base64) to its report entry. The Worker keeps it as the 'after'
+    picture and also as 'before' when the page changed or has no 'before' yet (first baseline)."""
+    return {**result, "shot": base64.b64encode(jpeg).decode()} if jpeg else result
+
+
+def run(api, token, vapid_key, subject, dry_run=False, no_shots=False):
     auth = {"Authorization": f"Bearer {token}"}
     # ?start=1 tells the Worker a run began, which the app shows as "Checking…" until the report arrives.
     r = requests.get(f"{api}/api/internal/jobs", params=None if dry_run else {"start": "1"}, headers=auth, timeout=TIMEOUT)
@@ -389,16 +427,22 @@ def run(api, token, vapid_key, subject, dry_run=False):
                 else:
                     lines_by_id[w["id"]] = lines
 
-    if need_browser:
-        browser = Browser(fetcher)
-        try:
-            for w in need_browser:
-                try:
-                    lines_by_id[w["id"]] = check_browser(w, browser)
-                except Exception as e:
-                    errors[w["id"]] = (str(e) or type(e).__name__).splitlines()[0]
-        finally:
-            browser.close()
+    # One browser for the whole run: watches the plain pass couldn't read, then a screenshot of every page
+    # that was read (plain-mode pages are loaded once more just for that).
+    browser = Browser(fetcher)
+    shots = {}
+    try:
+        for w in need_browser:
+            try:
+                lines_by_id[w["id"]] = check_browser(w, browser)
+            except Exception as e:
+                errors[w["id"]] = (str(e) or type(e).__name__).splitlines()[0]
+        if not no_shots:
+            for w in watches:
+                if w["id"] in lines_by_id:
+                    shots[w["id"]] = browser.shot(w["url"])
+    finally:
+        browser.close()
 
     results, dead = [], set()
     for w in watches:
@@ -408,7 +452,9 @@ def run(api, token, vapid_key, subject, dry_run=False):
             results.append({"id": w["id"], "error": errors[w["id"]]})
             continue
         res = compare(w, lines_by_id[w["id"]])
-        results.append(res)
+        results.append(with_shot(res, shots.get(w["id"])))
+        if w["id"] not in shots or shots[w["id"]] is None:
+            via += ", no screenshot"
         if not res["changed"] and res["hash"] != w.get("last_hash"):
             print(f"[{w['name']}] baseline ({via}, {len(res['text'])} chars)")
         elif not res["changed"]:
@@ -436,7 +482,8 @@ def main():
     if missing and not (dry and missing == ["VAPID_PRIVATE_KEY"]):
         sys.exit(f"missing env: {', '.join(missing)}")
     subject = env.get("VAPID_SUBJECT") or "https://zsoltszavo.github.io"  # mailto: or bare https origin
-    sys.exit(run(env["API_URL"].rstrip("/"), env["CHECKER_TOKEN"], env.get("VAPID_PRIVATE_KEY"), subject, dry))
+    sys.exit(run(env["API_URL"].rstrip("/"), env["CHECKER_TOKEN"], env.get("VAPID_PRIVATE_KEY"), subject, dry,
+                 no_shots="--no-shots" in sys.argv))
 
 
 if __name__ == "__main__":
