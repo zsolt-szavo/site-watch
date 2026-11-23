@@ -44,7 +44,7 @@ function timingSafeEqual(a, b) {
 function requireInvite(req, env) {
   if (!env.INVITE_CODE) throw new HttpError(500, "INVITE_CODE not configured");
   if (!timingSafeEqual(req.headers.get("X-Invite-Code") || "", env.INVITE_CODE))
-    throw new HttpError(403, "wrong invite code");
+    throw new HttpError(403, "wrong passcode");
 }
 
 function requireChecker(req, env) {
@@ -118,6 +118,13 @@ async function route(req, env) {
   const path = url.pathname.replace(/\/+$/, "");
   const m = req.method;
   const idMatch = path.match(/^\/api\/watches\/([\w-]+)$/);
+
+  // Per-IP rate limit on the public API (the checker's internal routes have their own token).
+  if (env.API_LIMIT && !path.startsWith("/api/internal/")) {
+    const ip = req.headers.get("CF-Connecting-IP") || "local";
+    const { success } = await env.API_LIMIT.limit({ key: ip });
+    if (!success) throw new HttpError(429, "too many requests, try again in a minute");
+  }
 
   if (m === "GET" && path === "/api/config")
     return json({ vapidPublicKey: env.VAPID_PUBLIC_KEY });
