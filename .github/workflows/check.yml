@@ -1,7 +1,9 @@
 name: check
 on:
+  # The Worker's cron starts this every 10 min (workflow_dispatch), and "Check now" in the app does too.
+  # GitHub's own schedule is late or skipped on small repos, so it is only an hourly fallback here.
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 permissions:
   contents: read

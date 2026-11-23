@@ -21,6 +21,7 @@
     <img src="icons/icon-192.png" alt="" width="32" height="32">
     <h1>site-watch</h1>
     <button id="refresh" class="ghost" type="button" title="Reload the list">Refresh</button>
+    <button id="open-add" type="button">Add page</button>
   </header>
 
   <main>
@@ -30,17 +31,24 @@
       and open site-watch from there (iOS 16.4 or newer).
     </div>
     <div id="push-unsupported" class="hint" hidden>This browser can't receive push alerts. You can still see the list.</div>
-    <div id="msg" class="msg" role="status" hidden></div>
+    <div id="load-error" class="msg error" role="alert" hidden></div>
 
     <section>
-      <h2>Watched pages</h2>
-      <p id="empty" class="muted" hidden>Nothing watched yet.</p>
+      <div class="section-head">
+        <h2>Watched pages</h2>
+        <button id="check-now" class="ghost" type="button" title="Check every page now instead of waiting for the next 10-minute run" hidden>Check now</button>
+      </div>
+      <p id="empty" class="muted" hidden>Nothing watched yet. Tap <strong>Add page</strong> to start.</p>
       <ul id="watches"></ul>
+      <p id="schedule-note" class="muted small" hidden>Pages are checked every 10 minutes.</p>
     </section>
+  </main>
 
-    <section>
-      <h2>Add a page</h2>
-      <form id="add">
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="add-dialog">
+      <form id="add" method="dialog">
+        <h2>Add a page</h2>
         <label>Address <input name="url" type="text" inputmode="url" placeholder="example.com/news" required autocomplete="off"></label>
         <label><span>Name <span class="muted">(optional)</span></span> <input name="name" type="text" maxlength="80" autocomplete="off"></label>
         <details>
@@ -58,10 +66,13 @@
           </label>
         </details>
         <p class="muted small">Watches are private to this device (up to 5). Add them on the device that should get the alerts.</p>
-        <button type="submit">Add</button>
+        <p class="error form-error" role="alert" hidden></p>
+        <div class="buttons">
+          <button type="button" class="ghost cancel">Cancel</button>
+          <button type="submit">Add</button>
+        </div>
       </form>
-    </section>
-  </main>
+  </dialog>
 
   <dialog id="edit-dialog">
     <form id="edit" method="dialog">
@@ -80,6 +91,7 @@
         </select>
       </label>
       <p class="muted small">Changing the address or filters makes the next check store a new baseline instead of alerting.</p>
+      <p class="error form-error" role="alert" hidden></p>
       <div class="buttons">
         <button type="button" class="ghost cancel">Cancel</button>
         <button type="submit" value="save">Save</button>

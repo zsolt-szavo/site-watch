@@ -7,7 +7,7 @@ and 50 in total; the public API is rate-limited to 60 requests/min per IP.
 ## Architecture
 
 ```
- GitHub Pages (PWA)  ──HTTPS──▶  Cloudflare Worker + D1   ◀──HTTPS──  GitHub Actions (every 10 min)
+ GitHub Pages (PWA)  ──HTTPS──▶  Cloudflare Worker + D1   ◀──HTTPS──  GitHub Actions (started every 10 min by the Worker cron)
  - add URL (per-device list)      - stores watches, push       - GET jobs (Bearer token)
  - list watches + last change       subscriptions, state       - fetch page (plain, fallback headless
  - subscribe/unsubscribe push     - public API + internal        Chromium for JS-heavy sites)
@@ -41,7 +41,7 @@ and 50 in total; the public API is rate-limited to 60 requests/min per IP.
    piandefontana.it (the real target).
 5. **Deploy** ✅ done 2026-11-23. Worker https://site-watch.zsolt-szavo.workers.dev in the personal
    Cloudflare account (pinned `account_id`; never the work account). PWA https://zsolt-szavo.github.io/site-watch/
-   via `pages.yml`. `check.yml` runs every 10 min and re-enables itself on each scheduled run (keep-alive).
+   via `pages.yml`. `check.yml` is started every 10 min by the Worker's cron trigger (workflow_dispatch with GH_DISPATCH_TOKEN) and by *Check now* (one start per 5 min, shared); its own GitHub schedule is an hourly fallback that re-enables itself on each scheduled run (keep-alive).
    Production secrets live in gitignored `checker/.env.prod`. Re-test from GitHub Actions:
    reddit dropped anonymous RSS in mid-November 2026 (HTTP 404), so the feed test watch is now telex.hu/rss.
    piandefontana.it times out in both auto and browser mode over https:// and over http://, and plain curl
@@ -50,7 +50,7 @@ and 50 in total; the public API is rate-limited to 60 requests/min per IP.
 
 ## Known limits
 
-- GitHub cron ≥ 5 min and often late; 10 min chosen.
+- GitHub cron ≥ 5 min and often late or skipped (no scheduled run fired in the first hours after deploy), so the Worker's Cloudflare cron starts the workflow instead; 10 min chosen.
 - Some sites block datacenter IPs / bots (Cloudflare challenge). Those will show
   "blocked" in the UI rather than silently failing.
 - Push still transits Apple/Google/Mozilla push servers (unavoidable for any

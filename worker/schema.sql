@@ -24,3 +24,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 CREATE INDEX IF NOT EXISTS watches_by_device ON watches(device_id);
 CREATE INDEX IF NOT EXISTS subs_by_watch ON subscriptions(watch_id);
+CREATE TABLE IF NOT EXISTS meta (   -- small key/value state, e.g. last_dispatch (ISO time the check workflow was last started)
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);

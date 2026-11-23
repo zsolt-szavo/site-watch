@@ -7,6 +7,8 @@
 //           POST /api/subscribe          {watch_id, subscription}
 //           POST /api/unsubscribe        {watch_id, endpoint}
 //           POST /api/my-subscriptions   {endpoint}  -> [watch_id]
+//           POST /api/check-now          start the GitHub check workflow now; one start per CHECK_COOLDOWN_S for everyone
+// Cron:     every 10 min the Worker starts the same workflow (GitHub's own schedule is late or skipped).
 // Checker:  GET  /api/internal/jobs, POST /api/internal/report        header Authorization: Bearer CHECKER_TOKEN
 
 const MODES = ["auto", "plain", "browser", "feed"];
@@ -115,6 +117,54 @@ function validSubscription(sub) {
   return { endpoint: sub.endpoint.slice(0, 1000), keys: JSON.stringify({ p256dh: sub.keys.p256dh, auth: sub.keys.auth }) };
 }
 
+// ---------- starting the checker (GitHub Actions workflow_dispatch) ----------
+// One run checks every watch, so the cooldown is global: devices share it, and the cron uses it too,
+// which keeps a manual check and the next scheduled one from both running.
+const cooldownS = (env) => Number(env.CHECK_COOLDOWN_S || 300);
+
+// Atomically take the dispatch slot. Returns {ok:true, prev} or {ok:false, availableAt}.
+async function claimDispatch(env, minGapS) {
+  const t = new Date();
+  const cutoff = new Date(t.getTime() - minGapS * 1000).toISOString();
+  const prev = (await env.DB.prepare("SELECT v FROM meta WHERE k = 'last_dispatch'").first())?.v || null;
+  const r = await env.DB.prepare(
+    `INSERT INTO meta (k, v) VALUES ('last_dispatch', ?1)
+     ON CONFLICT(k) DO UPDATE SET v = excluded.v WHERE meta.v < ?2`).bind(t.toISOString(), cutoff).run();
+  if (r.meta.changes === 1) return { ok: true, prev };
+  const last = (await env.DB.prepare("SELECT v FROM meta WHERE k = 'last_dispatch'").first())?.v;
+  return { ok: false, availableAt: new Date(new Date(last).getTime() + minGapS * 1000).toISOString() };
+}
+
+async function releaseDispatch(env, prev) {
+  if (prev) await env.DB.prepare("UPDATE meta SET v = ? WHERE k = 'last_dispatch'").bind(prev).run();
+  else await env.DB.prepare("DELETE FROM meta WHERE k = 'last_dispatch'").run();
+}
+
+async function dispatchWorkflow(env) {
+  const res = await fetch(
+    `https://api.github.com/repos/${env.GH_REPO}/actions/workflows/${env.GH_WORKFLOW || "check.yml"}/dispatches`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "site-watch-worker",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ref: env.GH_REF || "main" }),
+    });
+  if (res.status !== 204) throw new Error(`GitHub dispatch failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+}
+
+// Claim the slot, start the workflow, give the slot back if GitHub refused.
+async function startCheck(env, minGapS) {
+  const c = await claimDispatch(env, minGapS);
+  if (!c.ok) return c;
+  try { await dispatchWorkflow(env); }
+  catch (e) { await releaseDispatch(env, c.prev); throw e; }
+  return { ok: true, availableAt: new Date(Date.now() + minGapS * 1000).toISOString() };
+}
+
 async function route(req, env) {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
@@ -176,6 +226,20 @@ async function route(req, env) {
       env.DB.prepare("DELETE FROM watches WHERE id = ?").bind(idMatch[1]),
     ]);
     return json({ ok: true });
+  }
+
+  if (m === "POST" && path === "/api/check-now") {
+    const dev = deviceId(req);
+    if (!env.GH_DISPATCH_TOKEN || !env.GH_REPO) throw new HttpError(503, "Check now isn't set up on the server yet");
+    // Only devices that watch something may start a run.
+    const { mine } = await env.DB.prepare("SELECT COUNT(*) AS mine FROM watches WHERE device_id = ?").bind(dev).first();
+    if (!mine) throw new HttpError(400, "add a page first");
+    const r = await startCheck(env, cooldownS(env)).catch((e) => {
+      console.error(e);
+      throw new HttpError(502, "GitHub didn't accept the check request. Try again later.");
+    });
+    if (!r.ok) return json({ error: "a check was started recently", available_at: r.availableAt }, 429);
+    return json({ ok: true, available_at: r.availableAt }, 202);
   }
 
   if (m === "POST" && path === "/api/subscribe") {
@@ -259,5 +323,15 @@ export default {
     }
     for (const [k, v] of Object.entries(headers)) res.headers.set(k, v);
     return res;
+  },
+
+  // Cron trigger (wrangler.toml): start the check workflow on Cloudflare's punctual clock.
+  async scheduled(controller, env, ctx) {
+    if (!env.GH_DISPATCH_TOKEN || !env.GH_REPO) { console.warn("cron: GH_DISPATCH_TOKEN/GH_REPO not set, skipping"); return; }
+    const { n } = await env.DB.prepare("SELECT COUNT(*) AS n FROM watches").first();
+    if (!n) return;
+    // A manual "Check now" within the cooldown already covers this tick (ticks are 10 min apart, so they never block each other).
+    const r = await startCheck(env, cooldownS(env));
+    if (!r.ok) console.log(`cron: skipped, a check started recently (next at ${r.availableAt})`);
   },
 };
