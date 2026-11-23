@@ -336,9 +336,28 @@ async function load() {
     loadError("");
     render();
     pollStatus();
+    if (pendingFocus) focusWatch(pendingFocus);
   } catch (e) {
     loadError(`Couldn't load the list: ${e.message}`);
   }
+}
+
+// ---------- open from a notification ----------
+// A tapped alert opens the app at #watch=<id> (or messages the open app): scroll to that card, open its
+// pictures and flash it.
+let pendingFocus = new URLSearchParams(location.hash.slice(1)).get("watch") || "";
+function focusWatch(id) {
+  pendingFocus = "";
+  history.replaceState(null, "", location.pathname + location.search);
+  const w = watches.find((x) => x.id === id);
+  if (!w) return;
+  if (w.has_shots) { openView.set(id, "shots"); render(); }
+  const li = $(`.watch[data-id="${CSS.escape(id)}"]`);
+  if (!li) return;
+  li.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  li.classList.remove("flash");
+  void li.offsetWidth;   // restart the animation when the same card is focused twice
+  li.classList.add("flash");
 }
 
 // ---------- push ----------
@@ -637,6 +656,9 @@ async function boot() {
   $("#edit .cancel").addEventListener("click", () => $("#edit-dialog").close());
 
   if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data && e.data.type === "show-watch") { pendingFocus = String(e.data.watch_id); refresh({ force: true }); }
+    });
     try {
       await navigator.serviceWorker.register("sw.js");
       swReg = await navigator.serviceWorker.ready;

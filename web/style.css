@@ -160,3 +160,7 @@ button.shot.broken::after { content: "no picture"; color: var(--muted); font-siz
 #shot-dialog .diff { max-height: none; margin: 0; }
 /* iOS Safari zooms into any field whose text is under 16px when it's tapped; labels are smaller, so set it here. */
 input, textarea, select { font-size: max(16px, 1rem); }
+/* The card a tapped notification opened. */
+.watch { scroll-margin-top: 12px; }
+.watch.flash { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 40% { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); } }

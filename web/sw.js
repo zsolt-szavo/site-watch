@@ -1,5 +1,5 @@
 // Service worker: shows push alerts and keeps the app shell available offline.
-const CACHE = "site-watch-v9";   // cache name is internal: keep the prefix so old caches get cleaned up
+const CACHE = "site-watch-v10";   // cache name is internal: keep the prefix so old caches get cleaned up
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.json", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -34,15 +34,22 @@ self.addEventListener("push", (e) => {
     badge: "icons/icon-192.png",
     tag: d.watch_id || undefined,   // a newer alert for the same site replaces the older one
     renotify: Boolean(d.watch_id),
-    data: { url: d.url || self.registration.scope },
+    data: { watch_id: d.watch_id || "" },
   }));
 });
 
+// A tap opens the app on that page's card (with its pictures open), never the watched URL itself: for a
+// feed that would be raw RSS. An app window that is already open gets a message instead of a reload.
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
-  const url = e.notification.data && e.notification.data.url || self.registration.scope;
+  const id = (e.notification.data && e.notification.data.watch_id) || "";
+  const scope = self.registration.scope;
   e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
-    const open = wins.find((w) => w.url === url);
-    return open ? open.focus() : self.clients.openWindow(url);
+    const open = wins.find((w) => w.url.startsWith(scope));
+    if (open) {
+      if (id) open.postMessage({ type: "show-watch", watch_id: id });
+      return open.focus();
+    }
+    return self.clients.openWindow(id ? `${scope}#watch=${encodeURIComponent(id)}` : scope);
   }));
 });
