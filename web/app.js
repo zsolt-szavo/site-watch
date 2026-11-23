@@ -265,6 +265,21 @@ async function saveEdit(ev) {
   }
 }
 
+// Refresh only re-reads the list (checks run on GitHub's schedule), so once a minute is plenty.
+const REFRESH_COOLDOWN_S = 60;
+function refreshWithCooldown() {
+  const btn = $("#refresh");
+  btn.disabled = true;
+  load();
+  let left = REFRESH_COOLDOWN_S;
+  const tick = () => {
+    if (left <= 0) { btn.disabled = false; btn.textContent = "Refresh"; return; }
+    btn.textContent = `Refresh (${left--}s)`;
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
 // ---------- boot ----------
 async function boot() {
   $("#add").elements.invite.value = store.get(INVITE_KEY);
@@ -272,7 +287,7 @@ async function boot() {
   $("#push-unsupported").hidden = pushSupported || isIOS;
 
   $("#add").addEventListener("submit", addWatch);
-  $("#refresh").addEventListener("click", load);
+  $("#refresh").addEventListener("click", refreshWithCooldown);
   $("#watches").addEventListener("change", (e) => { if (e.target.matches(".alert")) toggleAlert(e.target); });
   $("#watches").addEventListener("click", (e) => {
     if (e.target.matches(".delete")) deleteWatch(e.target);
