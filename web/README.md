@@ -1,6 +1,6 @@
 # web
 
-Static PWA, no build step. API base URL is in `config.js` (localhost → `http://localhost:8787`, else the deployed Worker).
+**Web Change Watcher** (the app's display name; repo, Worker and localStorage keys keep the `site-watch` id). Static PWA, no build step. API base URL is in `config.js` (localhost → `http://localhost:8787`, else the deployed Worker).
 
 ```sh
 cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` running
@@ -12,6 +12,10 @@ cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` r
 - Header: *Refresh* re-reads the list; it shares one 60 s cooldown with tab refocus and the 2-minute auto re-read (localStorage, so across tabs too), *Add page* opens the add dialog. *Check now* (`POST /api/check-now`)
   starts the GitHub checker right away; the server allows one start per 5 min shared by all devices, and the button counts down.
   Feedback shows as a toast at the bottom; errors inside a dialog show in the dialog.
+- Run status: `GET /api/check-status` after each list load; while a check is *queued* (dispatched, not picked up yet)
+  or *running* (checker fetched its jobs, hasn't reported) a banner shows elapsed time and polls every 10 s while visible.
+  When it ends the list is re-read at once. The server's `available_at` also syncs the *Check now* countdown across devices.
+- Phones (≤ 520 px): Refresh shrinks to ↻ (plus countdown), "Add page" to "+ Add"; touch screens get ≥ 40 px buttons.
 - ↑/↓ on a card reorders the list; the order is per device, kept in localStorage (`site-watch.order`), new watches go on top.
 - `sw.js`: shows push `{title, body, url, watch_id}` (tag = watch_id, so a newer alert replaces the older one),
   opens `url` on click, caches the app shell (network first). Bump `CACHE` when changing shell files.

@@ -1,6 +1,6 @@
 {
-  "name": "site-watch",
-  "short_name": "site-watch",
+  "name": "Web Change Watcher",
+  "short_name": "Web Watcher",
   "description": "Get a notification when a web page changes.",
   "start_url": "./",
   "scope": "./",

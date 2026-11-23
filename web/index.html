@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>site-watch</title>
+  <title>Web Change Watcher</title>
   <meta name="description" content="Get a notification when a web page changes.">
   <meta name="theme-color" content="#0f766e">
   <link rel="manifest" href="manifest.json">
@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="site-watch">
+  <meta name="apple-mobile-web-app-title" content="Web Watcher">
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
   <script src="app.js" defer></script>
@@ -19,16 +19,16 @@
 <body>
   <header>
     <img src="icons/icon-192.png" alt="" width="32" height="32">
-    <h1>site-watch</h1>
-    <button id="refresh" class="ghost" type="button" title="Reload the list">Refresh</button>
-    <button id="open-add" type="button">Add page</button>
+    <h1>Web Change Watcher</h1>
+    <button id="refresh" class="ghost" type="button" title="Reload the list" aria-label="Refresh the list"><span aria-hidden="true">↻</span><span class="lbl">Refresh</span></button>
+    <button id="open-add" type="button"><span aria-hidden="true">+</span> Add<span class="wide"> page</span></button>
   </header>
 
   <main>
     <div id="ios-hint" class="hint" hidden>
       <strong>On iPhone or iPad?</strong> Alerts only work from the Home Screen app.
       Tap <span class="share" aria-label="Share">Share</span> then <em>Add to Home Screen</em>,
-      and open site-watch from there (iOS 16.4 or newer).
+      and open Web Watcher from there (iOS 16.4 or newer).
     </div>
     <div id="push-unsupported" class="hint" hidden>This browser can't receive push alerts. You can still see the list.</div>
     <div id="load-error" class="msg error" role="alert" hidden></div>
@@ -37,6 +37,9 @@
       <div class="section-head">
         <h2>Watched pages</h2>
         <button id="check-now" class="ghost" type="button" title="Check every page now instead of waiting for the next 10-minute run" hidden>Check now</button>
+      </div>
+      <div id="run-status" class="run-status" role="status" aria-live="polite" hidden>
+        <span class="spinner" aria-hidden="true"></span><span class="text"></span>
       </div>
       <p id="empty" class="muted" hidden>Nothing watched yet. Tap <strong>Add page</strong> to start.</p>
       <ul id="watches"></ul>

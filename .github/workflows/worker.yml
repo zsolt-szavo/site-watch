@@ -1,0 +1,49 @@
+name: worker
+# Deploys the Cloudflare Worker whenever worker/ changes on main (the PWA has its own pages.yml).
+# Needs repo secret CLOUDFLARE_API_TOKEN: a Cloudflare API token from the "Edit Cloudflare Workers"
+# template, limited to the personal account pinned as account_id in worker/wrangler.toml.
+# Also copies repo secret GH_DISPATCH_TOKEN (fine-grained PAT, Actions: read and write) into the Worker.
+on:
+  push:
+    branches: [main]
+    paths: [worker/**, .github/workflows/worker.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: worker
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Repo secret CLOUDFLARE_API_TOKEN is not set, so the Worker was not deployed (see worker.yml header)."
+            exit 1
+          fi
+          npx wrangler deploy
+      # The Worker can't read GitHub secrets, so copy the ones it needs into its own Cloudflare secrets.
+      - name: Sync Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_DISPATCH_TOKEN" ]; then
+            echo "::warning::Repo secret GH_DISPATCH_TOKEN is not set: Check now and the 10-min cron stay off."
+            exit 0
+          fi
+          printf '%s' "$GH_DISPATCH_TOKEN" | npx wrangler secret put GH_DISPATCH_TOKEN

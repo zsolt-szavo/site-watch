@@ -1,4 +1,4 @@
-// site-watch API. Stores watches + push subscriptions in D1.
+// Web Change Watcher API (deployed as the "site-watch" Worker). Stores watches + push subscriptions in D1.
 // Public:   GET  /api/config, GET /api/watches, GET /api/watches/:id
 //           POST /api/watches            {url, name?, selector?, contains?, ignore?, mode?}
 //           PATCH /api/watches/:id       same fields
@@ -8,8 +8,11 @@
 //           POST /api/unsubscribe        {watch_id, endpoint}
 //           POST /api/my-subscriptions   {endpoint}  -> [watch_id]
 //           POST /api/check-now          start the GitHub check workflow now; one start per CHECK_COOLDOWN_S for everyone
+//           GET  /api/check-status       {state: idle|queued|running, dispatched_at, started_at, finished_at, available_at}
 // Cron:     every 10 min the Worker starts the same workflow (GitHub's own schedule is late or skipped).
-// Checker:  GET  /api/internal/jobs, POST /api/internal/report        header Authorization: Bearer CHECKER_TOKEN
+// Checker:  GET  /api/internal/jobs[?start=1], POST /api/internal/report   header Authorization: Bearer CHECKER_TOKEN
+//           POST /api/internal/fetch {url, ua}  -> {status, body}: fetch a page from Cloudflare's network
+//                (the checker's fallback when a site throttles GitHub's shared runner IPs)
 
 const MODES = ["auto", "plain", "browser", "feed"];
 const now = () => new Date().toISOString();
@@ -165,6 +168,36 @@ async function startCheck(env, minGapS) {
   return { ok: true, availableAt: new Date(Date.now() + minGapS * 1000).toISOString() };
 }
 
+// ---------- run status (shown in the app while a check is queued or running) ----------
+// meta keys: last_dispatch (Worker started the workflow), run_started (checker fetched its jobs with ?start=1),
+// run_finished (checker reported). A run that never reports (crashed job) stops counting after RUN_MAX_MS.
+const RUN_MAX_MS = 20 * 60e3, QUEUE_MAX_MS = 10 * 60e3;
+const setMeta = (env, k, v) =>
+  env.DB.prepare("INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v").bind(k, v);
+
+export function runState({ last_dispatch: d, run_started: s, run_finished: f }, t = Date.now()) {
+  const age = (iso) => (iso ? t - Date.parse(iso) : Infinity);
+  if (s && (!f || f < s) && age(s) < RUN_MAX_MS) return "running";
+  if (d && (!s || s < d) && age(d) < QUEUE_MAX_MS) return "queued";
+  return "idle";
+}
+
+async function checkStatus(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT k, v FROM meta WHERE k IN ('last_dispatch', 'run_started', 'run_finished')").all();
+  const m = Object.fromEntries(results.map((r) => [r.k, r.v]));
+  const d = m.last_dispatch;
+  return {
+    state: runState(m),
+    dispatched_at: d || null,
+    started_at: m.run_started || null,
+    finished_at: m.run_finished || null,
+    available_at: d ? new Date(Date.parse(d) + cooldownS(env) * 1000).toISOString() : null,
+  };
+}
+
+const FETCH_MAX_CHARS = 3_000_000;
+
 async function route(req, env) {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
@@ -242,6 +275,8 @@ async function route(req, env) {
     return json({ ok: true, available_at: r.availableAt }, 202);
   }
 
+  if (m === "GET" && path === "/api/check-status") return json(await checkStatus(env));
+
   if (m === "POST" && path === "/api/subscribe") {
     const b = await body(req);
     await getWatch(env, String(b.watch_id || ""), deviceId(req));
@@ -269,6 +304,7 @@ async function route(req, env) {
 
   if (m === "GET" && path === "/api/internal/jobs") {
     requireChecker(req, env);
+    if (url.searchParams.get("start") === "1") await setMeta(env, "run_started", now()).run();
     const [{ results: watches }, { results: subs }] = await env.DB.batch([
       env.DB.prepare("SELECT * FROM watches"),
       env.DB.prepare("SELECT endpoint, watch_id, keys FROM subscriptions"),
@@ -302,8 +338,30 @@ async function route(req, env) {
     }
     for (const endpoint of b.dead_endpoints || [])
       stmts.push(env.DB.prepare("DELETE FROM subscriptions WHERE endpoint = ?").bind(String(endpoint)));
-    if (stmts.length) await env.DB.batch(stmts);
+    stmts.push(setMeta(env, "run_finished", t));
+    await env.DB.batch(stmts);
     return json({ ok: true, updated: stmts.length });
+  }
+
+  if (m === "POST" && path === "/api/internal/fetch") {
+    requireChecker(req, env);
+    const b = await body(req);
+    const target = validateUrl(b.url);
+    let res;
+    try {
+      res = await fetch(target, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": String(b.ua || "Mozilla/5.0").slice(0, 300),
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en,hu;q=0.8",
+        },
+      });
+    } catch (e) {
+      throw new HttpError(502, `fetch failed: ${e.message}`);
+    }
+    const text = await res.text();
+    return json({ status: res.status, body: text.slice(0, FETCH_MAX_CHARS) });
   }
 
   throw new HttpError(404, "not found");

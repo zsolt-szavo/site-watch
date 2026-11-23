@@ -8,6 +8,10 @@ selector / ignore / contains filters → diff against `last_text` → Web Push t
   isn't in the static HTML, or there's < 200 chars of text. Still blocked ⇒ `last_error = "blocked (HTTP …)"`.
 - Relative timestamps ("5 minutes ago", "12 perce", "2 ore fa", "yesterday") are cut out of every line before
   comparing, so they never trigger an alert. The rest of the line is still compared.
+- Politeness / rate limits: each URL is downloaded once per run (watches sharing a page share the download),
+  requests to one host are spaced 3 s apart (one thread per host), a 429/503 is retried once after `Retry-After` (≤ 20 s),
+  and a still-blocked plain fetch (or a timeout) is retried through the Worker (`POST /api/internal/fetch`, Cloudflare's IPs
+  instead of GitHub's shared ones). Some sites refuse Cloudflare too (piandefontana.it answers 520), so this only helps sometimes.
 - `mode=feed`: HTTP 403/429 ⇒ `blocked`. In `auto`, a plain-fetch timeout also falls back to Chromium.
 - Push services answering 404/410 ⇒ endpoint sent back as `dead_endpoints` and deleted.
 - Changing extraction output? Bump `EXTRACT_VERSION` in `check.py` so watches re-baseline instead of alerting.

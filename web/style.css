@@ -12,16 +12,25 @@
   }
 }
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 header { display: flex; align-items: center; gap: 10px; max-width: 720px; margin: 0 auto; padding: 16px; }
 header img { border-radius: 8px; }
-h1 { font-size: 1.3rem; margin: 0; flex: 1; min-width: 0; }
-header button { white-space: nowrap; }
+h1 { font-size: 1.3rem; line-height: 1.2; margin: 0; flex: 1; min-width: 0; text-wrap: balance; }
+header button { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 header button:not(.ghost) { padding: 6px 12px; }
+#refresh { min-width: 40px; justify-content: center; font-variant-numeric: tabular-nums; }
+/* Phones: the title wraps, Refresh shrinks to its icon (plus the countdown) and "Add page" to "Add". */
+@media (max-width: 520px) {
+  header { gap: 8px; padding: 12px 16px; }
+  h1 { font-size: 1.1rem; }
+  #refresh:not([data-cooling]) .lbl, #open-add .wide { display: none; }
+}
 h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 28px 0 10px; }
 main { max-width: 720px; margin: 0 auto; padding: 0 16px 48px; }
 .muted { color: var(--muted); }
@@ -30,6 +39,18 @@ a { color: var(--accent); }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 28px 0 10px; }
 .section-head h2 { margin: 0; }
 #schedule-note { margin-top: 10px; }
+.run-status {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 10px 12px; font-size: .9rem;
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.run-status[hidden] { display: none; }
+.spinner {
+  flex: none; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.5s; } }
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 10;
   bottom: calc(16px + env(safe-area-inset-bottom)); width: max-content; max-width: calc(100vw - 32px);
@@ -61,6 +82,7 @@ ul#watches { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; 
 }
 .error { color: var(--bad); font-size: .85rem; margin-top: 6px; overflow-wrap: anywhere; }
 .actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.actions .buttons { margin-left: auto; }   /* stays right-aligned when it wraps under the toggle */
 .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .toggle input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
 
@@ -83,12 +105,18 @@ button.delete:hover { color: var(--bad); border-color: var(--bad); }
 button.move { padding: 6px 10px; min-width: 36px; }
 .watch .move[hidden] { display: none; }
 button:disabled, input:disabled { opacity: .55; cursor: default; }
+/* Touch screens: at least ~40px tap targets. */
+@media (pointer: coarse) {
+  button.ghost { min-height: 40px; }
+  button.move { min-width: 44px; }
+  .toggle { min-height: 40px; }
+}
 
 .buttons { display: flex; gap: 8px; justify-content: flex-end; }
 .small { font-size: .8rem; margin: 0; }
 dialog {
   border: 1px solid var(--line); border-radius: 12px; padding: 0; background: var(--card); color: var(--text);
-  width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; overscroll-behavior: contain;
 }
 dialog::backdrop { background: rgb(0 0 0 / .45); }
 dialog form { border: 0; }
