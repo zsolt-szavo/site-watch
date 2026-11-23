@@ -171,8 +171,16 @@ const openShots = new Set();   // watch ids whose picture list is open (survives
 const shotLists = new Map();   // watch id -> {key, items}; key changes when a new check reported
 const shotUrls = new Map();    // shot id -> blob URL (or a promise of one)
 
-const when = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-const shotLabel = (s) => s.kind === "latest" ? "Now" : s.kind === "change" ? "Changed" : "First check";
+// "2026-11-23 22:38" in local time: sortable at a glance and the same on every phone locale.
+const when = (iso) => {
+  const d = new Date(iso), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const shotLabel = (s) => s.kind === "latest" ? "Latest check" : s.kind === "change" ? "New version" : "First check";
+// A check that found a change stores two rows with the same picture and time ("latest" + "change"):
+// show it once, as the new version.
+const shotItems = (items) => items.filter((s, i) =>
+  !(s.kind === "latest" && items.some((o, j) => j !== i && o.kind !== "latest" && o.taken_at === s.taken_at)));
 
 function shotUrl(watchId, shotId) {
   if (!shotUrls.has(shotId)) {
@@ -205,10 +213,11 @@ async function showShots(li, w) {
     }
   }
   if (waited && !li.isConnected) return;   // the list was redrawn meanwhile; the new card loads its own
-  const changes = list.items.filter((s) => s.kind === "change").length;
-  note.textContent = changes ? `Latest check, then ${changes > 1 ? `the last ${changes} changes` : "the last change"}. Tap one to enlarge.`
-    : "Latest check and the first one. Tap one to enlarge.";
-  row.replaceChildren(...list.items.map((s) => {
+  const items = shotItems(list.items);   // newest first, as the server sends them
+  const changes = items.filter((s) => s.kind === "change").length;
+  note.textContent = changes ? `Newest first: ${changes > 1 ? `the last ${changes} versions` : "the last version"}. Tap one to enlarge.`
+    : "Newest first. Tap one to enlarge.";
+  row.replaceChildren(...items.map((s) => {
     const fig = document.createElement("figure");
     const btn = document.createElement("button");
     btn.type = "button";
@@ -219,10 +228,10 @@ async function showShots(li, w) {
     img.alt = "";
     btn.append(img);
     const cap = document.createElement("figcaption");
-    cap.innerHTML = "<b></b><span></span>";
+    cap.innerHTML = "<b></b> <span></span>";
     cap.firstChild.textContent = shotLabel(s);
     cap.lastChild.textContent = when(s.taken_at);
-    fig.append(btn, cap);
+    fig.append(cap, btn);
     shotUrl(w.id, s.id).then((u) => { img.src = u; }, () => { btn.classList.add("broken"); });
     return fig;
   }));
