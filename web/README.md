@@ -6,7 +6,7 @@ Static PWA, no build step. API base URL is in `config.js` (localhost → `http:/
 cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` running
 ```
 
-- `app.js`: list (`GET /api/watches`), add/delete (header `X-Invite-Code`, remembered in localStorage),
+- `app.js`: list (`GET /api/watches`), add/edit/delete; every call sends `X-Device-Id`, a random id kept in localStorage that owns this device's watches,
   per-watch alert toggle (`/api/config` key → `pushManager.subscribe` → `/api/subscribe`, `/api/unsubscribe`,
   `/api/my-subscriptions` to restore toggles). Errors starting with "blocked" show a *blocked* badge.
 - `sw.js`: shows push `{title, body, url, watch_id}` (tag = watch_id, so a newer alert replaces the older one),

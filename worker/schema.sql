@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS watches (
   id           TEXT PRIMARY KEY,
+  device_id    TEXT,              -- owner: random id kept by the PWA (X-Device-Id); NULL = orphaned
   url          TEXT NOT NULL,
   name         TEXT NOT NULL,
   selector     TEXT,              -- optional CSS selector to narrow the watched part
@@ -21,4 +22,5 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   created_at TEXT NOT NULL,
   PRIMARY KEY (endpoint, watch_id)
 );
+CREATE INDEX IF NOT EXISTS watches_by_device ON watches(device_id);
 CREATE INDEX IF NOT EXISTS subs_by_watch ON subscriptions(watch_id);
