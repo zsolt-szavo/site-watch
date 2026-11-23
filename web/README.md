@@ -17,8 +17,11 @@ cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` r
   When it ends the list is re-read at once. The server's `available_at` also syncs the *Check now* countdown across devices.
 - Phones (≤ 520 px): Refresh shrinks to ↻ (plus countdown), "Add page" to "+ Add"; touch screens get ≥ 40 px buttons.
 - *Pictures ▾* on a card's meta line (when the checker has screenshots) opens the versions stacked one below the
-  other, newest first, each labelled with its time (`2026-11-23 22:38`): *Latest check* (hidden when it is the
+  other, newest first, each labelled with its time (`2026-11-23 22:38`): *Now* (shown once as *Now · new version* when it is the
   newest version itself), then each *New version* and the *First check*, newest 5 kept (`GET /api/watches/:id/shots`).
+- *Text ▾* next to it opens the page text as last read (`GET /api/watches/:id/text`) in a 320px scroll box.
+- A *blocked* check first shows as *retrying* (grey): bot walls often block one GitHub runner IP and let the next
+  through. Only after an hour of blocked checks in a row (`blocked_since`) does the card turn *blocked*.
   Images need `X-Device-Id`, so they're fetched and shown as blob URLs; tapping one opens it full size with that change's diff.
 - ↑/↓ on a card reorders the list; the order is per device, kept in localStorage (`site-watch.order`), new watches go on top.
 - `sw.js`: shows push `{title, body, url, watch_id}` (tag = watch_id, so a newer alert replaces the older one),

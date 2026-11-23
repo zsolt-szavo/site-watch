@@ -6,6 +6,7 @@
 //           GET  /api/watches/:id/shots          [{id, kind, taken_at, diff}] newest first: the latest check,
 //                                                then up to SHOT_HISTORY changes / the first baseline
 //           GET  /api/watches/:id/shots/:shotId  image/jpeg
+//           GET  /api/watches/:id/text           {text, checked}: the page text as last read
 //           Every watch route needs header X-Device-Id: each device only sees and changes its own watches.
 //           POST /api/subscribe          {watch_id, subscription}
 //           POST /api/unsubscribe        {watch_id, endpoint}
@@ -102,7 +103,9 @@ function cleanFields(input, partial = false) {
 
 const PUBLIC_COLS =
   "w.id, w.url, w.name, w.selector, w.contains, w.ignore, w.mode, w.created_at, w.last_checked, w.last_change, w.last_diff, w.last_error, " +
-  "(SELECT COUNT(*) FROM shots WHERE watch_id = w.id) AS shot_count";
+  "(SELECT COUNT(*) FROM shots WHERE watch_id = w.id) AS shot_count, " +
+  // When the site started blocking the checker (consecutive blocked checks), kept in meta to avoid a migration.
+  "(SELECT v FROM meta WHERE k = 'blocked_since:' || w.id) AS blocked_since";
 
 function publicWatch(row) {
   if (!row) return row;
@@ -243,6 +246,7 @@ async function route(req, env) {
   const m = req.method;
   const idMatch = path.match(/^\/api\/watches\/([\w-]+)$/);
   const shotsMatch = path.match(/^\/api\/watches\/([\w-]+)\/shots(?:\/(\d+))?$/);
+  const textMatch = path.match(/^\/api\/watches\/([\w-]+)\/text$/);
 
   // Per-IP rate limit on the public API (the checker's internal routes have their own token).
   if (env.API_LIMIT && !path.startsWith("/api/internal/")) {
@@ -269,6 +273,12 @@ async function route(req, env) {
       `SELECT id, kind, taken_at, diff FROM shots WHERE watch_id = ?
        ORDER BY kind = 'latest' DESC, id DESC`).bind(shotsMatch[1]).all();
     return json(results);
+  }
+
+  if (m === "GET" && textMatch) {
+    await getWatch(env, textMatch[1], deviceId(req));
+    const row = await env.DB.prepare("SELECT last_text, last_checked FROM watches WHERE id = ?").bind(textMatch[1]).first();
+    return json({ text: row.last_text || "", checked: row.last_checked });
   }
 
   if (m === "GET" && shotsMatch) {
@@ -319,6 +329,7 @@ async function route(req, env) {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM subscriptions WHERE watch_id = ?").bind(idMatch[1]),
       env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]),
+      env.DB.prepare("DELETE FROM meta WHERE k = ?").bind(`blocked_since:${idMatch[1]}`),
       env.DB.prepare("DELETE FROM watches WHERE id = ?").bind(idMatch[1]),
     ]);
     return json({ ok: true });
@@ -385,6 +396,13 @@ async function route(req, env) {
     const t = now();
     const stmts = [];
     for (const r of b.results || []) {
+      // Sites behind bot walls block some runs and not others (it depends on the runner's IP), so the app
+      // only raises the alarm once a page has been blocked for a while: remember when the streak began.
+      const blockKey = `blocked_since:${r.id}`;
+      stmts.push(/^blocked/i.test(String(r.error || ""))
+        ? env.DB.prepare("INSERT OR IGNORE INTO meta (k, v) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?)")
+          .bind(blockKey, t, r.id)
+        : env.DB.prepare("DELETE FROM meta WHERE k = ?").bind(blockKey));
       if (r.error) {
         stmts.push(env.DB.prepare("UPDATE watches SET last_checked = ?, last_error = ? WHERE id = ?")
           .bind(t, String(r.error).slice(0, 500), r.id));

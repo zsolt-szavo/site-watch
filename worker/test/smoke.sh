@@ -84,6 +84,18 @@ req $API/api/watches/$ID "${D[@]}" >/dev/null
 grep -q '"last_diff":"+ new"' /tmp/sw_body && grep -q '"subscribers":0' /tmp/sw_body && check "report applied + dead sub removed" 1 1 || check "report applied" 1 0 "$(cat /tmp/sw_body)"
 grep -q 'last_text' /tmp/sw_body && check "public hides last_text" 1 0 || check "public hides last_text" 1 1
 check "history still 5"     "latest: change:+ new change:dC5 change:dC4 change:dC3 change:dC2" "$(kinds)"
+check "text"                200 "$(req $API/api/watches/$ID/text "${D[@]}")"
+grep -q '"text":"t"' /tmp/sw_body && check "text body" 1 1 || check "text body" 1 0 "$(cat /tmp/sw_body)"
+check "text other device"   404 "$(req $API/api/watches/$ID/text "${O[@]}")"
+# A blocked streak is remembered from its first blocked report until the next non-blocked one.
+since() { req $API/api/watches/$ID "${D[@]}" >/dev/null; python3 -c 'import json;print(json.load(open("/tmp/sw_body")).get("blocked_since") or "")'; }
+blk() { req -X POST $API/api/internal/report -H "$TA" -d '{"results":[{"id":"'$ID'","error":"'"$1"'"}]}' >/dev/null; }
+blk "blocked (HTTP 403)"; S1=$(since)
+[[ -n "$S1" ]] && check "blocked_since set" 1 1 || check "blocked_since set" 1 0
+blk "blocked (HTTP 403)"
+check "blocked_since keeps start" "$S1" "$(since)"
+blk "HTTP 500"
+check "other error clears it" "" "$(since)"
 check "patch filter"        200 "$(req -X PATCH $API/api/watches/$ID "${D[@]}" -d '{"contains":"x"}')"
 check "re-baseline drops shots" "" "$(kinds)"
 check "delete"              200 "$(req -X DELETE $API/api/watches/$ID "${D[@]}")"
