@@ -85,7 +85,14 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+// A site that blocks the checker usually lets the next run through (it depends on the runner's IP), so a
+// block only counts as a problem once it has lasted BLOCK_GRACE_MS; until then the card says "retrying".
+const BLOCK_GRACE_MS = 60 * 60 * 1000;
+const retrying = (w) => Boolean(w.last_error && /^blocked/i.test(w.last_error) && w.blocked_since
+  && Date.now() - new Date(w.blocked_since) < BLOCK_GRACE_MS);
+
 function status(w) {
+  if (retrying(w)) return ["retrying", "retrying"];
   if (w.last_error && /^blocked/i.test(w.last_error)) return ["blocked", "blocked"];
   if (w.last_error) return ["error", "error"];
   if (!w.last_checked) return ["pending", "not checked yet"];
@@ -95,6 +102,8 @@ function status(w) {
 // "Checked 5 min ago · changed 2 h ago" / "· no changes yet". The first check only stores a baseline.
 function metaLine(w) {
   if (!w.last_checked) return "Waiting for the first check";
+  if (retrying(w)) return `The site blocked the last check, trying again next run · `
+    + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
   return `Checked ${ago(w.last_checked)} · ` + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
 }
 
@@ -150,11 +159,13 @@ function render() {
     badge.textContent = label;
     const meta = $(".meta", li);
     $(".meta-text", meta).textContent = metaLine(w);
-    $(".shots-toggle", li).hidden = !w.has_shots;
+    $(".shots-toggle:not(.text-toggle)", li).hidden = !w.has_shots;
     if (w.has_shots && openShots.has(w.id)) showShots(li, w);
+    $(".text-toggle", li).hidden = !w.last_checked;
+    if (w.last_checked && openTexts.has(w.id)) showText(li, w);
     meta.title = `Checked: ${w.last_checked || "not yet"}\nLast change: ${w.last_change || "none seen yet"}`;
     if (w.last_diff) { const d = $(".diff", li); d.textContent = w.last_diff; d.hidden = false; }
-    if (w.last_error) { const e = $(".error", li); e.textContent = w.last_error; e.hidden = false; }
+    if (w.last_error && !retrying(w)) { const e = $(".error", li); e.textContent = w.last_error; e.hidden = false; }
     const box = $(".alert", li);
     box.checked = busy.has(w.id) ? busy.get(w.id) : mySubs.has(w.id);
     box.disabled = !canPush || busy.has(w.id);
@@ -176,11 +187,17 @@ const when = (iso) => {
   const d = new Date(iso), p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
-const shotLabel = (s) => s.kind === "latest" ? "Latest check" : s.kind === "change" ? "New version" : "First check";
 // A check that found a change stores two rows with the same picture and time ("latest" + "change"):
-// show it once, as the new version.
-const shotItems = (items) => items.filter((s, i) =>
-  !(s.kind === "latest" && items.some((o, j) => j !== i && o.kind !== "latest" && o.taken_at === s.taken_at)));
+// show it once, as "Now · new version".
+const shotItems = (items) => {
+  const latest = items.find((s) => s.kind === "latest");
+  const same = latest && items.find((s) => s.kind !== "latest" && s.taken_at === latest.taken_at);
+  return items.filter((s) => !(same && s === latest)).map((s) => ({ ...s, now: s === latest || s === same }));
+};
+const shotLabel = (s) => {
+  const kind = s.kind === "change" ? "new version" : s.kind === "baseline" ? "first check" : "";
+  return s.now ? (kind ? `Now · ${kind}` : "Now") : kind[0].toUpperCase() + kind.slice(1);
+};
 
 function shotUrl(watchId, shotId) {
   if (!shotUrls.has(shotId)) {
@@ -195,7 +212,7 @@ function shotUrl(watchId, shotId) {
 
 async function showShots(li, w) {
   const panel = $(".shots", li), row = $(".shots-row", panel), note = $(".shots-note", panel);
-  const toggle = $(".shots-toggle", li);
+  const toggle = $(".shots-toggle:not(.text-toggle)", li);
   toggle.setAttribute("aria-expanded", "true");
   $("span", toggle).textContent = "▴";
   panel.hidden = false;
@@ -252,9 +269,51 @@ function toggleShots(btn) {
   }
 }
 
+// ---------- page text ----------
+// "Text ▾" opens the page text as the checker last read it (what changes are detected on), in a scroll box.
+const openTexts = new Set();
+const texts = new Map();   // watch id -> {key, text}
+
+async function showText(li, w) {
+  const panel = $(".text-panel", li), pre = $("pre", panel), toggle = $(".text-toggle", li);
+  toggle.setAttribute("aria-expanded", "true");
+  $("span", toggle).textContent = "▴";
+  panel.hidden = false;
+  const key = w.last_checked;
+  let t = texts.get(w.id);
+  if (!t || t.key !== key) {
+    if (!t) pre.textContent = "Loading text…";
+    try {
+      t = { key, text: (await api(`/api/watches/${encodeURIComponent(w.id)}/text`)).text };
+      texts.set(w.id, t);
+    } catch (e) {
+      pre.textContent = `Couldn't load the text: ${e.message}`;
+      return;
+    }
+    if (!li.isConnected) return;
+  }
+  $(".text-note", panel).textContent = `Page text as read ${when(t.key)}. Changes are detected on this text.`;
+  pre.textContent = t.text || "(no text read yet)";
+}
+
+function toggleText(btn) {
+  const li = btn.closest(".watch");
+  const w = watches.find((x) => x.id === li.dataset.id);
+  if (!w) return;
+  if (openTexts.has(w.id)) {
+    openTexts.delete(w.id);
+    btn.setAttribute("aria-expanded", "false");
+    $("span", btn).textContent = "▾";
+    $(".text-panel", li).hidden = true;
+  } else {
+    openTexts.add(w.id);
+    showText(li, w);
+  }
+}
+
 async function enlargeShot(btn) {
   const w = watches.find((x) => x.id === btn.closest(".watch").dataset.id);
-  const s = w && (shotLists.get(w.id)?.items || []).find((x) => String(x.id) === btn.dataset.shot);
+  const s = w && shotItems(shotLists.get(w.id)?.items || []).find((x) => String(x.id) === btn.dataset.shot);
   if (!s) return;
   const d = $("#shot-dialog");
   $(".title", d).textContent = `${w.name} · ${shotLabel(s)} ${when(s.taken_at)}`;
@@ -567,6 +626,7 @@ async function boot() {
     if (e.target.matches(".move")) move(e.target);
     else if (e.target.matches(".delete")) deleteWatch(e.target);
     else if (e.target.matches(".edit")) openEdit(e.target);
+    else if (e.target.closest(".text-toggle")) toggleText(e.target.closest(".text-toggle"));   // also a .shots-toggle
     else if (e.target.closest(".shots-toggle")) toggleShots(e.target.closest(".shots-toggle"));
     else if (e.target.closest(".shot")) enlargeShot(e.target.closest(".shot"));
   });
