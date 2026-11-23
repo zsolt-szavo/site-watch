@@ -219,11 +219,19 @@ const when = (iso) => {
 const shotItems = (items) => {
   const latest = items.find((s) => s.kind === "latest");
   const history = items.filter((s) => s.kind !== "latest");
-  if (!latest) return history.map((s, i) => ({ ...s, now: i === 0 }));
+  if (!latest) return history.map((s, i) => ({ ...s, now: i === 0, since: s }));
   const current = history[0];
-  return [{ ...latest, now: true, diff: current?.diff || latest.diff }, ...history.slice(1)];
+  return [{ ...latest, now: true, since: current, diff: current?.diff || latest.diff }, ...history.slice(1)];
 };
-const shotLabel = (s) => s.now ? "Now" : s.kind === "baseline" ? "First check" : "Earlier version";
+// [bold label, muted detail]. The top picture is the current version; its detail says since when the page
+// looks like that ("unchanged since first check …" / "changed …"), older ones say when they appeared.
+const shotCaption = (s) => {
+  const v = s.now ? s.since : s;
+  const start = !v ? "" : v.kind === "baseline" ? `${s.now ? "unchanged since first check" : ""} ${when(v.taken_at)}`.trim()
+    : `changed ${when(v.taken_at)}`;
+  if (s.now) return ["Current version", start || `pictured ${when(s.taken_at)}`];
+  return [s.kind === "baseline" ? "First check" : "Earlier version", start];
+};
 
 function shotUrl(watchId, shotId) {
   if (!shotUrls.has(shotId)) {
@@ -261,15 +269,19 @@ async function showShots(li, w) {
     btn.type = "button";
     btn.className = "shot";
     btn.dataset.shot = s.id;
-    btn.setAttribute("aria-label", `${shotLabel(s)}, ${when(s.taken_at)}: enlarge`);
+    const [label, detail] = shotCaption(s);
+    btn.setAttribute("aria-label", `${label}, ${detail}: enlarge`);
     const img = document.createElement("img");
     img.alt = "";
     btn.append(img);
     const cap = document.createElement("figcaption");
     cap.innerHTML = "<b></b> <span></span>";
-    cap.firstChild.textContent = shotLabel(s);
-    cap.lastChild.textContent = when(s.taken_at);
-    fig.append(cap, btn);
+    cap.firstChild.textContent = label;
+    cap.lastChild.textContent = detail;
+    const frame = document.createElement("div");
+    frame.className = "shot-frame";
+    frame.append(btn);
+    fig.append(cap, frame);
     shotUrl(w.id, s.id).then((u) => { img.src = u; }, () => { btn.classList.add("broken"); });
     return fig;
   }));
@@ -303,7 +315,7 @@ async function enlargeShot(btn) {
   const s = w && shotItems(shotLists.get(w.id)?.items || []).find((x) => String(x.id) === btn.dataset.shot);
   if (!s) return;
   const d = $("#shot-dialog");
-  $(".title", d).textContent = `${w.name} · ${shotLabel(s)} ${when(s.taken_at)}`;
+  $(".title", d).textContent = `${w.name} · ${shotCaption(s).join(", ")}`;
   const diff = $(".diff", d);
   diff.textContent = s.diff || "";
   diff.hidden = !s.diff;
