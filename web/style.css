@@ -38,7 +38,6 @@ a { color: var(--accent); }
 
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 28px 0 10px; }
 .section-head h2 { margin: 0; }
-#schedule-note { margin-top: 10px; }
 .run-status {
   display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 10px 12px; font-size: .9rem;
   background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px;
@@ -122,21 +121,18 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 dialog form { border: 0; }
 dialog h2 { margin: 0; overflow-wrap: anywhere; }
 
-/* Screenshots: "Pictures ▾" on the meta line opens the versions stacked one below the other, newest first. */
-.shots-toggle {
-  background: none; color: var(--accent); border: 0; padding: 0 2px; margin-left: 4px;
+/* "Pictures ▾" / "Text ▾" under the meta line: an accordion, at most one of the two open per card. */
+.views { display: flex; gap: 16px; margin-top: 4px; }
+.views:not(:has(.view-toggle:not([hidden]))) { display: none; }
+.view-toggle {
+  background: none; color: var(--accent); border: 0; padding: 0;
   font: inherit; font-weight: 600; cursor: pointer;
 }
-.shots-toggle[hidden] { display: none; }
-@media (pointer: coarse) { .shots-toggle { padding: 8px 4px; margin: -8px 0; } }
-.shots { margin-top: 8px; }
-.shots[hidden] { display: none; }
-.shots-note { margin-bottom: 6px; }
+.view-toggle[hidden], .view[hidden] { display: none; }
+@media (pointer: coarse) { .view-toggle { padding: 8px 0; margin: -4px 0; } }
+.view { margin-top: 8px; }
+.shots-note { margin: 0 0 6px; }
 .shots-row { display: grid; gap: 14px; max-width: 640px; }
-/* "Text ▾": the page text as last read, in a box of limited height that scrolls. */
-.text-panel { margin-top: 8px; }
-.text-note { margin: 0 0 6px; }
-.text-panel[hidden] { display: none; }
 .page-text {
   margin: 0; max-height: 320px; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere;
   font-size: .8rem; line-height: 1.45; padding: 8px 10px; background: var(--diff-bg); border: 1px solid var(--line); border-radius: 8px;

@@ -1,6 +1,6 @@
 # web
 
-**Web Change Watcher** (the app's display name; repo, Worker and localStorage keys keep the `site-watch` id). Static PWA, no build step. API base URL is in `config.js` (localhost → `http://localhost:8787`, else the deployed Worker).
+**Web Watcher** (the app's display name; repo, Worker and localStorage keys keep the `site-watch` id). Static PWA, no build step. API base URL is in `config.js` (localhost → `http://localhost:8787`, else the deployed Worker).
 
 ```sh
 cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` running

@@ -1,5 +1,5 @@
 "use strict";
-// Web Change Watcher PWA. Talks to the Worker API (worker/src/index.js); API base comes from config.js.
+// Web Watcher PWA. Talks to the Worker API (worker/src/index.js); API base comes from config.js.
 
 const API = window.SITE_WATCH_API;
 const $ = (s, el = document) => el.querySelector(s);
@@ -142,7 +142,6 @@ function render() {
   store.set(ORDER_KEY, watches.length ? JSON.stringify(watches.map((w) => w.id)) : "");
   $("#empty").hidden = watches.length > 0;
   $("#check-now").hidden = watches.length === 0;
-  $("#schedule-note").hidden = watches.length === 0;
   const canPush = pushSupported && (!isIOS || isStandalone);
   watches.forEach((w, i) => {
     const li = $("#watch-tpl").content.firstElementChild.cloneNode(true);
@@ -161,10 +160,11 @@ function render() {
     badge.textContent = label;
     const meta = $(".meta", li);
     $(".meta-text", meta).textContent = metaLine(w);
-    $(".shots-toggle:not(.text-toggle)", li).hidden = !w.has_shots;
-    if (w.has_shots && openShots.has(w.id)) showShots(li, w);
-    $(".text-toggle", li).hidden = !w.last_checked;
-    if (w.last_checked && openTexts.has(w.id)) showText(li, w);
+    $('.view-toggle[data-view="shots"]', li).hidden = !w.has_shots;
+    $('.view-toggle[data-view="text"]', li).hidden = !w.last_checked;
+    const view = openView.get(w.id);
+    if (view === "shots" && w.has_shots) showShots(li, w);
+    if (view === "text" && w.last_checked) showText(li, w);
     meta.title = `Checked: ${w.last_checked || "not yet"}\nLast change: ${w.last_change || "none seen yet"}`;
     if (w.last_diff) { const d = $(".diff", li); d.textContent = w.last_diff; d.hidden = false; }
     if (w.last_error && !retrying(w)) { const e = $(".error", li); e.textContent = w.last_error; e.hidden = false; }
@@ -176,11 +176,35 @@ function render() {
   });
 }
 
+// ---------- pictures & text ----------
+// "Pictures ▾" and "Text ▾" under the meta line form an accordion: opening one closes the other.
+const openView = new Map();   // watch id -> "shots" | "text" (survives the list re-render)
+
+function setView(li, view) {
+  li.querySelectorAll(".view-toggle").forEach((b) => {
+    const on = b.dataset.view === view;
+    b.setAttribute("aria-expanded", String(on));
+    $("span", b).textContent = on ? "▴" : "▾";
+  });
+  li.querySelectorAll(".view").forEach((p) => { p.hidden = p.dataset.view !== view; });
+}
+
+function toggleView(btn) {
+  const li = btn.closest(".watch");
+  const w = watches.find((x) => x.id === li.dataset.id);
+  if (!w) return;
+  const view = openView.get(w.id) === btn.dataset.view ? null : btn.dataset.view;
+  if (view) openView.set(w.id, view); else openView.delete(w.id);
+  setView(li, view);
+  if (view === "shots") showShots(li, w);
+  if (view === "text") showText(li, w);
+}
+
 // ---------- screenshots ----------
-// The checker pictures every page. Per watch the server keeps the latest one ("Now") plus a history: the
-// first check and each change, newest SHOT_HISTORY. The ▾ on the meta line opens that list; images need
-// the X-Device-Id header, so they are fetched and shown as blob URLs. A shot id's image never changes.
-const openShots = new Set();   // watch ids whose picture list is open (survives the list re-render)
+// The checker pictures every page in full. Per watch the server keeps the latest picture plus a history:
+// the first check and each change, newest SHOT_HISTORY. Only versions are shown: "Now" (the latest picture)
+// and, below it, each earlier version of the text. Images need the X-Device-Id header, so they are fetched
+// and shown as blob URLs. A shot id's image never changes.
 const shotLists = new Map();   // watch id -> {key, items}; key changes when a new check reported
 const shotUrls = new Map();    // shot id -> blob URL (or a promise of one)
 
@@ -189,17 +213,17 @@ const when = (iso) => {
   const d = new Date(iso), p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
-// A check that found a change stores two rows with the same picture and time ("latest" + "change"):
-// show it once, as "Now · new version".
+// The server sends the latest picture first, then the history newest first. The newest history entry is
+// the version the page still shows, so the latest picture stands in for it (keeping its diff): with no
+// change yet that leaves one picture, "Now"; each change adds the version before it.
 const shotItems = (items) => {
   const latest = items.find((s) => s.kind === "latest");
-  const same = latest && items.find((s) => s.kind !== "latest" && s.taken_at === latest.taken_at);
-  return items.filter((s) => !(same && s === latest)).map((s) => ({ ...s, now: s === latest || s === same }));
+  const history = items.filter((s) => s.kind !== "latest");
+  if (!latest) return history.map((s, i) => ({ ...s, now: i === 0 }));
+  const current = history[0];
+  return [{ ...latest, now: true, diff: current?.diff || latest.diff }, ...history.slice(1)];
 };
-const shotLabel = (s) => {
-  const kind = s.kind === "change" ? "new version" : s.kind === "baseline" ? "first check" : "";
-  return s.now ? (kind ? `Now · ${kind}` : "Now") : kind[0].toUpperCase() + kind.slice(1);
-};
+const shotLabel = (s) => s.now ? "Now" : s.kind === "baseline" ? "First check" : "Earlier version";
 
 function shotUrl(watchId, shotId) {
   if (!shotUrls.has(shotId)) {
@@ -213,30 +237,25 @@ function shotUrl(watchId, shotId) {
 }
 
 async function showShots(li, w) {
+  setView(li, "shots");
   const panel = $(".shots", li), row = $(".shots-row", panel), note = $(".shots-note", panel);
-  const toggle = $(".shots-toggle:not(.text-toggle)", li);
-  toggle.setAttribute("aria-expanded", "true");
-  $("span", toggle).textContent = "▴";
-  panel.hidden = false;
   const key = `${w.last_checked}|${w.shot_count}`;
   let list = shotLists.get(w.id), waited = false;
   if (!list || list.key !== key) {
     waited = true;
-    if (!list) note.textContent = "Loading pictures…";
+    const status = (t) => { note.textContent = t; note.hidden = !t; };
+    if (!list) status("Loading pictures…");
     try {
       list = { key, items: await api(`/api/watches/${encodeURIComponent(w.id)}/shots`) };
       shotLists.set(w.id, list);
+      status("");
     } catch (e) {
-      note.textContent = `Couldn't load the pictures: ${e.message}`;
+      status(`Couldn't load the pictures: ${e.message}`);
       return;
     }
   }
   if (waited && !li.isConnected) return;   // the list was redrawn meanwhile; the new card loads its own
-  const items = shotItems(list.items);   // newest first, as the server sends them
-  const changes = items.filter((s) => s.kind === "change").length;
-  note.textContent = changes ? `Newest first: ${changes > 1 ? `the last ${changes} versions` : "the last version"}. Tap one to enlarge.`
-    : "Newest first. Tap one to enlarge.";
-  row.replaceChildren(...items.map((s) => {
+  row.replaceChildren(...shotItems(list.items).map((s) => {
     const fig = document.createElement("figure");
     const btn = document.createElement("button");
     btn.type = "button";
@@ -256,31 +275,13 @@ async function showShots(li, w) {
   }));
 }
 
-function toggleShots(btn) {
-  const li = btn.closest(".watch");
-  const w = watches.find((x) => x.id === li.dataset.id);
-  if (!w) return;
-  if (openShots.has(w.id)) {
-    openShots.delete(w.id);
-    btn.setAttribute("aria-expanded", "false");
-    $("span", btn).textContent = "▾";
-    $(".shots", li).hidden = true;
-  } else {
-    openShots.add(w.id);
-    showShots(li, w);
-  }
-}
-
 // ---------- page text ----------
-// "Text ▾" opens the page text as the checker last read it (what changes are detected on), in a scroll box.
-const openTexts = new Set();
+// The page text as the checker last read it (what changes are detected on), in a scroll box.
 const texts = new Map();   // watch id -> {key, text}
 
 async function showText(li, w) {
-  const panel = $(".text-panel", li), pre = $("pre", panel), toggle = $(".text-toggle", li);
-  toggle.setAttribute("aria-expanded", "true");
-  $("span", toggle).textContent = "▴";
-  panel.hidden = false;
+  setView(li, "text");
+  const pre = $(".page-text", li);
   const key = w.last_checked;
   let t = texts.get(w.id);
   if (!t || t.key !== key) {
@@ -294,23 +295,7 @@ async function showText(li, w) {
     }
     if (!li.isConnected) return;
   }
-  $(".text-note", panel).textContent = `Page text as read ${when(t.key)}. Changes are detected on this text.`;
   pre.textContent = t.text || "(no text read yet)";
-}
-
-function toggleText(btn) {
-  const li = btn.closest(".watch");
-  const w = watches.find((x) => x.id === li.dataset.id);
-  if (!w) return;
-  if (openTexts.has(w.id)) {
-    openTexts.delete(w.id);
-    btn.setAttribute("aria-expanded", "false");
-    $("span", btn).textContent = "▾";
-    $(".text-panel", li).hidden = true;
-  } else {
-    openTexts.add(w.id);
-    showText(li, w);
-  }
 }
 
 async function enlargeShot(btn) {
@@ -606,8 +591,8 @@ function renderRun() {
       : `Queued, waiting for GitHub to start the check… ${t}`;
     runTimer = setTimeout(renderRun, 1000);
   }
-  $("#schedule-note").textContent =
-    (run.finished_at ? `Last check finished ${ago(run.finished_at)}. ` : "") + "Pages are checked every 10 minutes.";
+  $("#check-now").title = (run.finished_at ? `Last check finished ${ago(run.finished_at)}. ` : "")
+    + "Pages are checked every 10 minutes; this checks them now.";
 }
 
 // ---------- boot ----------
@@ -628,8 +613,7 @@ async function boot() {
     if (e.target.matches(".move")) move(e.target);
     else if (e.target.matches(".delete")) deleteWatch(e.target);
     else if (e.target.matches(".edit")) openEdit(e.target);
-    else if (e.target.closest(".text-toggle")) toggleText(e.target.closest(".text-toggle"));   // also a .shots-toggle
-    else if (e.target.closest(".shots-toggle")) toggleShots(e.target.closest(".shots-toggle"));
+    else if (e.target.closest(".view-toggle")) toggleView(e.target.closest(".view-toggle"));
     else if (e.target.closest(".shot")) enlargeShot(e.target.closest(".shot"));
   });
   // Tap outside the picture (on the backdrop) closes it too.

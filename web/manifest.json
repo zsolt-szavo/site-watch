@@ -1,5 +1,5 @@
 {
-  "name": "Web Change Watcher",
+  "name": "Web Watcher",
   "short_name": "Web Watcher",
   "description": "Get a notification when a web page changes.",
   "start_url": "./",

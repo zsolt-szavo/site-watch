@@ -113,19 +113,29 @@ class Shots(unittest.TestCase):
         self.assertEqual(check.with_shot(r, None), r)
         self.assertEqual(base64.b64decode(check.with_shot(r, b"\xff\xd8jpeg")["shot"]), b"\xff\xd8jpeg")
 
-    def test_screenshot_quality_fallback(self):
+    def test_screenshot_quality_then_height_fallback(self):
+        big = check.MAX_SHOT_BYTES + 1
         class Page:
-            def __init__(self, sizes): self.sizes, self.qualities = sizes, []
-            def screenshot(self, type, quality, timeout):
-                self.qualities.append(quality)
+            def __init__(self, sizes, height=3000): self.sizes, self.height, self.calls = sizes, height, []
+            def evaluate(self, js): return self.height
+            def screenshot(self, type, quality, full_page, clip, timeout):
+                assert full_page
+                self.calls.append((quality, clip["height"]))
                 return b"x" * self.sizes.pop(0)
         p = Page([10])
         self.assertEqual(check.screenshot(p), b"x" * 10)
-        self.assertEqual(p.qualities, [60])
-        p = Page([check.MAX_SHOT_BYTES + 1, 20])
+        self.assertEqual(p.calls, [(60, 3000)])
+        p = Page([big, 20])
         self.assertEqual(check.screenshot(p), b"x" * 20)
-        self.assertEqual(p.qualities, [60, 35])
-        self.assertIsNone(check.screenshot(Page([check.MAX_SHOT_BYTES + 1] * 2)))
+        self.assertEqual(p.calls, [(60, 3000), (40, 3000)])
+        # Too big at every quality: half the height, then give up once at one screen.
+        p = Page([big] * 3 + [30])
+        self.assertEqual(check.screenshot(p), b"x" * 30)
+        self.assertEqual(p.calls[3], (60, 1500))
+        p = Page([big] * 15, height=99_999)
+        self.assertIsNone(check.screenshot(p))
+        self.assertEqual([h for _, h in p.calls[::3]], [check.SHOT_MAX_HEIGHT, 4000, 2000, 1000, 900])
+        self.assertIsNone(check.screenshot(Page([big] * 3, height=100)))   # one screen, never fits
 
     def test_browser_shot_reuses_load_and_survives_errors(self):
         b = check.Browser()
