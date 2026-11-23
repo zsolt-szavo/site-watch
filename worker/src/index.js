@@ -15,11 +15,16 @@
 //           GET  /api/check-status       {state: idle|queued|running, dispatched_at, started_at, finished_at, available_at}
 // Cron:     every 10 min the Worker starts the same workflow (GitHub's own schedule is late or skipped).
 // Checker:  GET  /api/internal/jobs[?start=1], POST /api/internal/report   header Authorization: Bearer CHECKER_TOKEN
+//           GET  /api/internal/jobs?home=1, POST /api/internal/report {via: "home"}: the home checker (a computer on a
+//                home connection, checker/home/) takes the watches GitHub's runners get blocked on; see HOME_FRESH_MS.
 //           POST /api/internal/fetch {url, ua}  -> {status, body}: fetch a page from Cloudflare's network
 //                (the checker's fallback when a site throttles GitHub's shared runner IPs)
 
 const MODES = ["auto", "plain", "browser", "feed"];
 const now = () => new Date().toISOString();
+// A watch the home checker read within this long is left to it: the GitHub run skips it. Older (the computer is
+// asleep or off) and GitHub tries again, so a card never goes quiet without saying why.
+const HOME_FRESH_MS = 30 * 60 * 1000;
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -105,7 +110,8 @@ const PUBLIC_COLS =
   "w.id, w.url, w.name, w.selector, w.contains, w.ignore, w.mode, w.created_at, w.last_checked, w.last_change, w.last_diff, w.last_error, " +
   "(SELECT COUNT(*) FROM shots WHERE watch_id = w.id) AS shot_count, " +
   // When the site started blocking the checker (consecutive blocked checks), kept in meta to avoid a migration.
-  "(SELECT v FROM meta WHERE k = 'blocked_since:' || w.id) AS blocked_since";
+  "(SELECT v FROM meta WHERE k = 'blocked_since:' || w.id) AS blocked_since, " +
+  "(SELECT v FROM meta WHERE k = 'home_ok:' || w.id) AS home_ok";   // last time the home checker read it
 
 function publicWatch(row) {
   if (!row) return row;
@@ -329,7 +335,7 @@ async function route(req, env) {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM subscriptions WHERE watch_id = ?").bind(idMatch[1]),
       env.DB.prepare("DELETE FROM shots WHERE watch_id = ?").bind(idMatch[1]),
-      env.DB.prepare("DELETE FROM meta WHERE k = ?").bind(`blocked_since:${idMatch[1]}`),
+      env.DB.prepare("DELETE FROM meta WHERE k IN (?, ?)").bind(`blocked_since:${idMatch[1]}`, `home_ok:${idMatch[1]}`),
       env.DB.prepare("DELETE FROM watches WHERE id = ?").bind(idMatch[1]),
     ]);
     return json({ ok: true });
@@ -379,11 +385,18 @@ async function route(req, env) {
   if (m === "GET" && path === "/api/internal/jobs") {
     requireChecker(req, env);
     if (url.searchParams.get("start") === "1") await setMeta(env, "run_started", now()).run();
-    const [{ results: watches }, { results: subs }] = await env.DB.batch([
-      env.DB.prepare("SELECT * FROM watches"),
+    const [{ results: all }, { results: subs }] = await env.DB.batch([
+      env.DB.prepare(`SELECT w.*, (SELECT v FROM meta WHERE k = 'blocked_since:' || w.id) AS blocked_since,
+                      (SELECT v FROM meta WHERE k = 'home_ok:' || w.id) AS home_ok FROM watches w`),
       env.DB.prepare("SELECT endpoint, watch_id, keys FROM subscriptions"),
     ]);
-    return json(watches.map((w) => ({
+    // home=1: the watches GitHub got blocked on, and those the home checker already handles.
+    // Otherwise: everything except what the home checker read recently.
+    const fresh = new Date(Date.now() - HOME_FRESH_MS).toISOString();
+    const watches = url.searchParams.get("home") === "1"
+      ? all.filter((w) => w.blocked_since || w.home_ok)
+      : all.filter((w) => !(w.home_ok && w.home_ok > fresh));
+    return json(watches.map(({ blocked_since, home_ok, ...w }) => ({
       ...w,
       ignore: JSON.parse(w.ignore || "[]"),
       subscriptions: subs.filter((s) => s.watch_id === w.id).map((s) => ({ endpoint: s.endpoint, keys: JSON.parse(s.keys) })),
@@ -403,6 +416,9 @@ async function route(req, env) {
         ? env.DB.prepare("INSERT OR IGNORE INTO meta (k, v) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?)")
           .bind(blockKey, t, r.id)
         : env.DB.prepare("DELETE FROM meta WHERE k = ?").bind(blockKey));
+      if (b.via === "home" && !r.error)
+        stmts.push(env.DB.prepare("INSERT OR REPLACE INTO meta (k, v) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?)")
+          .bind(`home_ok:${r.id}`, t, r.id));
       if (r.error) {
         stmts.push(env.DB.prepare("UPDATE watches SET last_checked = ?, last_error = ? WHERE id = ?")
           .bind(t, String(r.error).slice(0, 500), r.id));
@@ -421,7 +437,7 @@ async function route(req, env) {
     }
     for (const endpoint of b.dead_endpoints || [])
       stmts.push(env.DB.prepare("DELETE FROM subscriptions WHERE endpoint = ?").bind(String(endpoint)));
-    stmts.push(setMeta(env, "run_finished", t));
+    if (b.via !== "home") stmts.push(setMeta(env, "run_finished", t));   // the app's "Checking…" tracks the GitHub run
     await env.DB.batch(stmts);
     return json({ ok: true, updated: stmts.length });
   }

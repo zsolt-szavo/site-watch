@@ -19,6 +19,19 @@ selector / ignore / contains filters → diff against `last_text` → Web Push t
 - Push services answering 404/410 ⇒ endpoint sent back as `dead_endpoints` and deleted.
 - Changing extraction output? Bump `EXTRACT_VERSION` in `check.py` so watches re-baseline instead of alerting.
 
+## Home checker (sites that block GitHub)
+
+Some sites (telex.hu since Nov 2026) answer every data-center IP with Cloudflare's "Just a moment…" challenge, so
+neither the GitHub runners nor the Worker detour get through. `home/` runs the same checker from a Mac on a home
+connection, for just those watches, every 10 min via launchd: no browser tab needed, alerts arrive as usual.
+
+- `GET /api/internal/jobs?home=1` lists the watches with a blocked streak (`blocked_since`) or already read at
+  home (`home_ok`); its report carries `"via": "home"`, which stamps `home_ok`.
+- While `home_ok` is under 30 min old the GitHub run skips that watch. When the Mac sleeps it goes stale and
+  GitHub tries again, so the card shows *retrying*/*blocked* rather than going quiet. The app says "Checked from home".
+- Install: `checker/home/install.sh` (needs `checker/.venv`; asks for the Worker URL and `CHECKER_TOKEN` once and
+  keeps them in `~/.config/site-watch/home.env`, mode 600). Log: `~/Library/Logs/site-watch-home.log`.
+
 ## Local
 
 ```sh

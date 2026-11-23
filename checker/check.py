@@ -10,6 +10,7 @@ Env:
   python check.py            # one full run
   python check.py --dry-run  # fetch + diff + print, no push, no report
   python check.py --no-shots # skip the page screenshots
+  python check.py --home     # home checker: only the watches GitHub's runners get blocked on (see home/)
 """
 import base64
 import concurrent.futures as cf
@@ -395,15 +396,19 @@ def with_shot(result, jpeg):
     return {**result, "shot": base64.b64encode(jpeg).decode()} if jpeg else result
 
 
-def run(api, token, vapid_key, subject, dry_run=False, no_shots=False):
+def run(api, token, vapid_key, subject, dry_run=False, no_shots=False, home=False):
     auth = {"Authorization": f"Bearer {token}"}
     # ?start=1 tells the Worker a run began, which the app shows as "Checking…" until the report arrives.
-    r = requests.get(f"{api}/api/internal/jobs", params=None if dry_run else {"start": "1"}, headers=auth, timeout=TIMEOUT)
+    # The home checker runs on its own clock and leaves that indicator to the GitHub run.
+    params = {"home": "1"} if home else None if dry_run else {"start": "1"}
+    r = requests.get(f"{api}/api/internal/jobs", params=params, headers=auth, timeout=TIMEOUT)
     r.raise_for_status()
     watches = r.json()
     print(f"{len(watches)} watch(es)")
+    if not watches:
+        return 0
 
-    fetcher = Fetcher(api, token)
+    fetcher = Fetcher(None if home else api, token)   # at home the Worker detour is never better than the direct line
     by_host = defaultdict(list)
     for w in watches:
         by_host[host_of(w["url"])].append(w)
@@ -471,7 +476,7 @@ def run(api, token, vapid_key, subject, dry_run=False, no_shots=False):
         print("dry run: nothing reported")
         return 0
     r = requests.post(f"{api}/api/internal/report", headers=auth, timeout=TIMEOUT,
-                      json={"results": results, "dead_endpoints": sorted(dead)})
+                      json={"results": results, "dead_endpoints": sorted(dead), **({"via": "home"} if home else {})})
     r.raise_for_status()
     print(f"reported {len(results)} result(s), {len(dead)} dead endpoint(s)")
     return 0
@@ -485,7 +490,7 @@ def main():
         sys.exit(f"missing env: {', '.join(missing)}")
     subject = env.get("VAPID_SUBJECT") or "https://zsoltszavo.github.io"  # mailto: or bare https origin
     sys.exit(run(env["API_URL"].rstrip("/"), env["CHECKER_TOKEN"], env.get("VAPID_PRIVATE_KEY"), subject, dry,
-                 no_shots="--no-shots" in sys.argv))
+                 no_shots="--no-shots" in sys.argv, home="--home" in sys.argv))
 
 
 if __name__ == "__main__":
