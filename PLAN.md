@@ -1,0 +1,52 @@
+# site-watch — plan
+
+Self-hosted "notify me when this page changes". Free tiers only. Anyone with the
+invite code can add a site; anyone can subscribe to push alerts for a site.
+
+## Architecture
+
+```
+ GitHub Pages (PWA)  ──HTTPS──▶  Cloudflare Worker + D1   ◀──HTTPS──  GitHub Actions (every 10 min)
+ - add URL (invite code)          - stores watches, push       - GET jobs (Bearer token)
+ - list watches + last change       subscriptions, state       - fetch page (plain, fallback headless
+ - subscribe/unsubscribe push     - public API + internal        Chromium for JS-heavy sites)
+ - service worker shows push        API for the checker        - diff → Web Push (VAPID) to subscribers
+                                                               - POST results back
+```
+
+- **Frontend**: static PWA on GitHub Pages (`/web`). Works in every modern browser;
+  on iOS it must be added to the Home Screen (iOS 16.4+) to receive push.
+- **API**: Cloudflare Worker (`/worker`), D1 (SQLite). No CPU-heavy work here.
+- **Checker**: GitHub Actions (`/checker`, Python). Public repo ⇒ unlimited minutes.
+  Sends Web Push itself (pywebpush), VAPID private key in Actions secrets.
+- **Secrets**: `CHECKER_TOKEN` (Worker ↔ Actions), `INVITE_CODE` (Worker),
+  `VAPID_PRIVATE_KEY` (Actions), VAPID public key is public.
+
+## Phases (one session each)
+
+1. **Worker API + D1 schema**, tested locally with `wrangler dev`. ✅ done (`cd worker && npm run db:local && npm run dev`, then `npm test`)
+2. **Checker** ✅ done (`cd checker && python -m unittest`; local run: see checker/README.md): plain fetch + text extraction (port of `watch.py`), headless
+   Chromium fallback (Playwright), diff, Web Push, report back. Local run against
+   `wrangler dev`.
+3. **PWA** ✅ done (`cd web && python3 -m http.server 8000`; e2e: `web/test/e2e_firefox.py`): add/list/delete watches, per-watch subscribe toggle, service worker,
+   manifest + icons, iOS "add to Home Screen" hint. Plain HTML/CSS/JS, no build.
+4. **Noise control + test matrix** ✅ done (relative timestamps + bare rank lines scrubbed by default; edit dialog in the PWA, e2e: `web/test/e2e_edit_firefox.py`). Results from a Mac on the office network, 2026-11-23:
+   HN newest ok (alerts only on new posts); binance ok with selector `span.text-PrimaryText.whitespace-nowrap.font-semibold`;
+   met.hu ok in auto/plain (browser mode flaps on a number); 9gag noisy (vote/comment counts) and needs ignore rules;
+   reddit feed answers HTTP 404 to anonymous requests from here; piandefontana.it hangs (plain timeout, browser 429/timeout).
+   Re-test both from GitHub Actions in phase 5. Original scope: optional CSS selector / "contains text" filter,
+   ignore regexes, RSS/JSON mode for reddit. Test sites: news.ycombinator.com/newest,
+   reddit.com/r/…, 9gag.com, binance.com (price ticker ⇒ needs selector), met.hu,
+   piandefontana.it (the real target).
+5. **Deploy**: Cloudflare account + `wrangler deploy`, GitHub repo + Pages + secrets,
+   keep-alive so the scheduled workflow isn't disabled after 60 idle days.
+
+## Known limits
+
+- GitHub cron ≥ 5 min and often late; 10 min chosen.
+- Some sites block datacenter IPs / bots (Cloudflare challenge). Those will show
+  "blocked" in the UI rather than silently failing.
+- Push still transits Apple/Google/Mozilla push servers (unavoidable for any
+  phone push); payloads are end-to-end encrypted.
+
+`prototype/` holds the first single-file ntfy version; phase 2 ports its text extraction.
