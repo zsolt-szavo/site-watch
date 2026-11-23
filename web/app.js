@@ -88,12 +88,15 @@ function ago(iso) {
 // A site that blocks the checker usually lets the next run through (it depends on the runner's IP), so a
 // block only counts as a problem once it has lasted BLOCK_GRACE_MS; until then the card says "retrying".
 const BLOCK_GRACE_MS = 60 * 60 * 1000;
-const retrying = (w) => Boolean(w.last_error && /^blocked/i.test(w.last_error) && w.blocked_since
+// A site that doesn't answer ("not responding …") gets the same grace: it is usually back by the next run.
+const noAnswer = (w) => /^not responding/i.test(w.last_error || "");
+const retrying = (w) => Boolean(w.last_error && (/^blocked/i.test(w.last_error) || noAnswer(w)) && w.blocked_since
   && Date.now() - new Date(w.blocked_since) < BLOCK_GRACE_MS);
 
 function status(w) {
   if (retrying(w)) return ["retrying", "retrying"];
   if (w.last_error && /^blocked/i.test(w.last_error)) return ["blocked", "blocked"];
+  if (noAnswer(w)) return ["blocked", "not responding"];
   if (w.last_error) return ["error", "error"];
   if (!w.last_checked) return ["pending", "not checked yet"];
   return ["ok", "ok"];
@@ -102,7 +105,7 @@ function status(w) {
 // "Checked 5 min ago · changed 2 h ago" / "· no changes yet". The first check only stores a baseline.
 function metaLine(w) {
   if (!w.last_checked) return "Waiting for the first check";
-  if (retrying(w)) return `The site blocked the last check, trying again next run · `
+  if (retrying(w)) return `The site ${noAnswer(w) ? "didn't answer" : "blocked"} the last check, trying again next run · `
     + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
   // home_ok within 30 min = the home checker (a computer on a home connection) is the one reading this page.
   const home = w.home_ok && Date.now() - new Date(w.home_ok) < 30 * 60 * 1000 ? " from home" : "";

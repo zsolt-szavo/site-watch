@@ -75,6 +75,21 @@ class Blocked(Exception):
     """The site answered with a bot wall instead of content."""
 
 
+# A site that times out, refuses the connection or answers 5xx is down or overloaded, usually for a
+# while only. Reported as "not responding …" so the Worker and the app treat it like a block: one hour of
+# "retrying" (and the home checker trying it too) before the card shows a problem.
+NO_ANSWER = "not responding"
+
+
+def describe_error(e):
+    msg = (str(e) or type(e).__name__).splitlines()[0]
+    if isinstance(e, (requests.Timeout, requests.ConnectionError)) or "net::ERR_" in msg \
+            or re.search(r"Timeout \d+ms exceeded", msg):
+        return f"{NO_ANSWER} (the site didn't answer)"
+    m = re.fullmatch(r"HTTP (5\d\d)", msg)
+    return f"{NO_ANSWER} (HTTP {m[1]})" if m else msg
+
+
 # ---------------------------------------------------------------- extraction
 
 def html_to_lines(html, selector=None):
@@ -209,8 +224,10 @@ class Fetcher:
                 self.wait_turn(url)
                 status, body, _ = fetch_plain(url)
         except requests.RequestException:
+            # No answer here. A 5xx from the detour (Cloudflare says 520-524 when the site doesn't answer it
+            # either) is no answer too: re-raise so auto mode still lets a real browser try.
             proxied = self.via_worker(url)
-            if proxied is None:
+            if proxied is None or proxied[0] >= 500:
                 raise
             return proxied
         if status in BLOCK_STATUSES:
@@ -440,7 +457,7 @@ def run(api, token, vapid_key, subject, dry_run=False, no_shots=False, home=Fals
             try:
                 out.append((w, check_plain(w, fetcher), None))
             except Exception as e:
-                out.append((w, None, str(e) or type(e).__name__))
+                out.append((w, None, describe_error(e)))
         return out
 
     with cf.ThreadPoolExecutor(max_workers=8) as pool:
@@ -462,7 +479,7 @@ def run(api, token, vapid_key, subject, dry_run=False, no_shots=False, home=Fals
             try:
                 lines_by_id[w["id"]] = check_browser(w, browser)
             except Exception as e:
-                errors[w["id"]] = (str(e) or type(e).__name__).splitlines()[0]
+                errors[w["id"]] = describe_error(e)
         if not no_shots:
             for w in watches:
                 if w["id"] in lines_by_id:

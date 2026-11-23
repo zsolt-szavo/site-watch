@@ -106,6 +106,30 @@ class Fetching(unittest.TestCase):
         self.answers = {"https://a.it/": [(429, "", None), (429, "", None)]}
         self.assertEqual(f.get("https://a.it/")[0], 429)
 
+    def test_worker_5xx_after_timeout_is_no_answer(self):
+        f = self.fetcher(gap=0)
+        def timeout(url): raise check.requests.Timeout("read timed out")
+        check.fetch_plain, saved = timeout, check.fetch_plain
+        try:
+            f.via_worker = lambda url: (520, "")   # Cloudflare couldn't reach the site either
+            with self.assertRaises(check.requests.Timeout):
+                f.get("https://slow.it/")
+            f.cache.clear()
+            f.via_worker = lambda url: (200, "from worker")
+            self.assertEqual(f.get("https://slow.it/"), (200, "from worker"))
+        finally:
+            check.fetch_plain = saved
+
+    def test_describe_error(self):
+        d = check.describe_error
+        self.assertEqual(d(check.requests.Timeout("x")), "not responding (the site didn't answer)")
+        self.assertEqual(d(RuntimeError("Page.goto: Timeout 30000ms exceeded.\nCall log: …")),
+                         "not responding (the site didn't answer)")
+        self.assertEqual(d(RuntimeError("net::ERR_CONNECTION_REFUSED at http://a.it/")), "not responding (the site didn't answer)")
+        self.assertEqual(d(RuntimeError("HTTP 520")), "not responding (HTTP 520)")
+        self.assertEqual(d(RuntimeError("HTTP 404")), "HTTP 404")
+        self.assertEqual(d(check.Blocked("blocked (HTTP 403)")), "blocked (HTTP 403)")
+
 
 class Shots(unittest.TestCase):
     def test_with_shot(self):
