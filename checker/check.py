@@ -435,7 +435,7 @@ def main():
     dry = "--dry-run" in sys.argv
     if missing and not (dry and missing == ["VAPID_PRIVATE_KEY"]):
         sys.exit(f"missing env: {', '.join(missing)}")
-    subject = env.get("VAPID_SUBJECT") or "https://zsolt-szavo.github.io"  # mailto: or bare https origin
+    subject = env.get("VAPID_SUBJECT") or "https://zsoltszavo.github.io"  # mailto: or bare https origin
     sys.exit(run(env["API_URL"].rstrip("/"), env["CHECKER_TOKEN"], env.get("VAPID_PRIVATE_KEY"), subject, dry))
 
 
