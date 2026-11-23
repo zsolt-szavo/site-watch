@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>Web Watcher</title>
   <meta name="description" content="Get a notification when a web page changes.">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#f6f7f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1514" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -122,7 +123,7 @@
         <button type="button" class="view-toggle" data-view="text" aria-expanded="false" hidden>Text <span aria-hidden="true">▾</span></button>
       </div>
       <div class="view shots" data-view="shots" hidden><p class="shots-note muted small" hidden></p><div class="shots-row"></div></div>
-      <div class="view text-panel" data-view="text" hidden><pre class="page-text"></pre></div>
+      <div class="view text-panel" data-view="text" hidden><p class="text-note shots-note muted small" hidden></p><div class="text-versions"></div></div>
       <pre class="diff" hidden></pre>
       <div class="error" hidden></div>
       <div class="actions">
