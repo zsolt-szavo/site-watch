@@ -1,5 +1,5 @@
 // Service worker: shows push alerts and keeps the app shell available offline.
-const CACHE = "site-watch-v2";
+const CACHE = "site-watch-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.json", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

@@ -9,9 +9,10 @@ cd web && python3 -m http.server 8000     # with `cd ../worker && npm run dev` r
 - `app.js`: list (`GET /api/watches`), add/edit/delete; every call sends `X-Device-Id`, a random id kept in localStorage that owns this device's watches,
   per-watch alert toggle (`/api/config` key → `pushManager.subscribe` → `/api/subscribe`, `/api/unsubscribe`,
   `/api/my-subscriptions` to restore toggles). Errors starting with "blocked" show a *blocked* badge.
-- Header: *Refresh* re-reads the list (60 s cooldown), *Add page* opens the add dialog. *Check now* (`POST /api/check-now`)
+- Header: *Refresh* re-reads the list; it shares one 60 s cooldown with tab refocus and the 2-minute auto re-read (localStorage, so across tabs too), *Add page* opens the add dialog. *Check now* (`POST /api/check-now`)
   starts the GitHub checker right away; the server allows one start per 5 min shared by all devices, and the button counts down.
   Feedback shows as a toast at the bottom; errors inside a dialog show in the dialog.
+- ↑/↓ on a card reorders the list; the order is per device, kept in localStorage (`site-watch.order`), new watches go on top.
 - `sw.js`: shows push `{title, body, url, watch_id}` (tag = watch_id, so a newer alert replaces the older one),
   opens `url` on click, caches the app shell (network first). Bump `CACHE` when changing shell files.
 - iOS: push only works from the Home Screen app (iOS 16.4+); the page shows a hint and disables toggles otherwise.

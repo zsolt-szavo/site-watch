@@ -96,16 +96,48 @@ function metaLine(w) {
   return `Checked ${ago(w.last_checked)} · ` + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
 }
 
+// ---------- order ----------
+// Card order is per device like the watches themselves, so it lives in localStorage next to the device id.
+// Ids the stored order doesn't know yet (just added, or added before reordering existed) go on top, newest first.
+const ORDER_KEY = "site-watch.order";
+function readOrder() {
+  try { const a = JSON.parse(store.get(ORDER_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function applyOrder(list) {
+  const pos = new Map(readOrder().map((id, i) => [id, i]));
+  const fresh = list.filter((w) => !pos.has(w.id));   // server order: newest first
+  const known = list.filter((w) => pos.has(w.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
+  return fresh.concat(known);
+}
+
+function move(btn) {
+  const id = btn.closest(".watch").dataset.id;
+  const dir = Number(btn.dataset.dir);
+  const i = watches.findIndex((w) => w.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= watches.length) return;
+  [watches[i], watches[j]] = [watches[j], watches[i]];
+  render();
+  // Keep keyboard focus on the moved card; at the top/bottom the pressed arrow is disabled, so use the other one.
+  const li = $(`.watch[data-id="${CSS.escape(id)}"]`);
+  const same = $(`.move[data-dir="${dir}"]`, li);
+  (same.disabled ? $(`.move[data-dir="${-dir}"]`, li) : same).focus();
+}
+
 function render() {
   const list = $("#watches");
   list.replaceChildren();
+  store.set(ORDER_KEY, watches.length ? JSON.stringify(watches.map((w) => w.id)) : "");
   $("#empty").hidden = watches.length > 0;
   $("#check-now").hidden = watches.length === 0;
   $("#schedule-note").hidden = watches.length === 0;
   const canPush = pushSupported && (!isIOS || isStandalone);
-  for (const w of watches) {
+  watches.forEach((w, i) => {
     const li = $("#watch-tpl").content.firstElementChild.cloneNode(true);
     li.dataset.id = w.id;
+    const [up, down] = li.querySelectorAll(".move");
+    up.hidden = down.hidden = watches.length < 2;
+    up.disabled = i === 0;
+    down.disabled = i === watches.length - 1;
     const a = $(".name", li);
     a.textContent = w.name;
     a.href = w.url;
@@ -124,12 +156,12 @@ function render() {
     box.disabled = !canPush || busy.has(w.id);
     if (!canPush) $(".toggle", li).title = isIOS ? "Add to Home Screen first" : "Push alerts aren't supported here";
     list.append(li);
-  }
+  });
 }
 
 async function load() {
   try {
-    watches = await api("/api/watches");
+    watches = applyOrder(await api("/api/watches"));
     await loadMySubs();
     loadError("");
     render();
@@ -296,21 +328,31 @@ async function saveEdit(ev) {
 }
 
 // Refresh only re-reads the list (checks run every 10 min, or via Check now), so once a minute is plenty.
+// Every background re-read (button, tab refocus, auto timer, page load) goes through refresh(), so they
+// share one 60 s cooldown. It lives in localStorage, so other tabs of this app respect it too.
+// The real limit is per IP in the Worker; this keeps the client from ever needing it.
 const REFRESH_COOLDOWN_S = 60;
-// The real limit is per IP in the Worker; this just keeps the button honest across page reloads.
+const AUTO_REFRESH_S = 120;   // while visible; longer than the cooldown so the button stays usable
 const REFRESH_KEY = "site-watch.refreshedAt";
-function refreshWithCooldown() {
+let refreshTimer;
+const refreshLeft = () =>
+  Math.ceil(REFRESH_COOLDOWN_S - (Date.now() - Number(store.get(REFRESH_KEY) || 0)) / 1000);
+
+// force: page load only (the list must show up); everything else is skipped during the cooldown.
+function refresh({ force = false } = {}) {
+  if (!force && refreshLeft() > 0) return;
   store.set(REFRESH_KEY, String(Date.now()));
   load();
   startRefreshCooldown();
 }
 function startRefreshCooldown() {
   const btn = $("#refresh");
+  clearTimeout(refreshTimer);
   const tick = () => {
-    const left = Math.ceil(REFRESH_COOLDOWN_S - (Date.now() - Number(store.get(REFRESH_KEY) || 0)) / 1000);
+    const left = refreshLeft();
     btn.disabled = left > 0;
     btn.textContent = left > 0 ? `Refresh (${left}s)` : "Refresh";
-    if (left > 0) setTimeout(tick, 1000);
+    if (left > 0) refreshTimer = setTimeout(tick, 1000);
   };
   tick();
 }
@@ -360,11 +402,12 @@ async function boot() {
   $("#check-now").addEventListener("click", checkNow);
   startCheckCooldown();
   $("#toast").addEventListener("click", (e) => { e.currentTarget.hidden = true; });
-  $("#refresh").addEventListener("click", refreshWithCooldown);
+  $("#refresh").addEventListener("click", () => refresh());
   startRefreshCooldown();
   $("#watches").addEventListener("change", (e) => { if (e.target.matches(".alert")) toggleAlert(e.target); });
   $("#watches").addEventListener("click", (e) => {
-    if (e.target.matches(".delete")) deleteWatch(e.target);
+    if (e.target.matches(".move")) move(e.target);
+    else if (e.target.matches(".delete")) deleteWatch(e.target);
     else if (e.target.matches(".edit")) openEdit(e.target);
   });
   $("#edit").addEventListener("submit", saveEdit);
@@ -378,9 +421,9 @@ async function boot() {
       console.warn("service worker registration failed", e);
     }
   }
-  await load();
-  setInterval(() => { if (document.visibilityState === "visible") load(); }, 60_000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
+  refresh({ force: true });
+  setInterval(() => { if (document.visibilityState === "visible") refresh(); }, AUTO_REFRESH_S * 1000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
 }
 
 boot();
