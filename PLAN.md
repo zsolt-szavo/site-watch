@@ -38,8 +38,14 @@ invite code can add a site; anyone can subscribe to push alerts for a site.
    ignore regexes, RSS/JSON mode for reddit. Test sites: news.ycombinator.com/newest,
    reddit.com/r/…, 9gag.com, binance.com (price ticker ⇒ needs selector), met.hu,
    piandefontana.it (the real target).
-5. **Deploy**: Cloudflare account + `wrangler deploy`, GitHub repo + Pages + secrets,
-   keep-alive so the scheduled workflow isn't disabled after 60 idle days.
+5. **Deploy** ✅ done 2026-11-23. Worker https://site-watch.zsolt-szavo.workers.dev in the personal
+   Cloudflare account (pinned `account_id`; never the work account). PWA https://zsolt-szavo.github.io/site-watch/
+   via `pages.yml`. `check.yml` runs every 10 min and re-enables itself on each scheduled run (keep-alive).
+   Production secrets live in gitignored `checker/.env.prod`. Re-test from GitHub Actions:
+   reddit feed still HTTP 404 (blocks anonymous datacenter traffic too); piandefontana.it times out in both
+   auto and browser mode, and plain curl gets an instant HTTP 429. It blocks bots/datacenter IPs, not just
+   the office network. **Open problem:** find out whether it loads in a normal phone browser, and whether it
+   has an RSS feed, newsletter or API to watch instead.
 
 ## Known limits
 
