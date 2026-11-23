@@ -104,7 +104,9 @@ function metaLine(w) {
   if (!w.last_checked) return "Waiting for the first check";
   if (retrying(w)) return `The site blocked the last check, trying again next run · `
     + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
-  return `Checked ${ago(w.last_checked)} · ` + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
+  // home_ok within 30 min = the home checker (a computer on a home connection) is the one reading this page.
+  const home = w.home_ok && Date.now() - new Date(w.home_ok) < 30 * 60 * 1000 ? " from home" : "";
+  return `Checked${home} ${ago(w.last_checked)} · ` + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
 }
 
 // ---------- order ----------
