@@ -1,5 +1,5 @@
 "use strict";
-// site-watch PWA. Talks to the Worker API (worker/src/index.js); API base comes from config.js.
+// Web Change Watcher PWA. Talks to the Worker API (worker/src/index.js); API base comes from config.js.
 
 const API = window.SITE_WATCH_API;
 const $ = (s, el = document) => el.querySelector(s);
@@ -19,6 +19,8 @@ const store = {
   get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
   set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* ignore */ } },
 };
+
+// Storage keys keep the old "site-watch." prefix: renaming them would lose this device's watches.
 
 // ---------- device identity ----------
 // No accounts: a random id in localStorage owns this device's watches. Clearing site data loses them.
@@ -165,6 +167,7 @@ async function load() {
     await loadMySubs();
     loadError("");
     render();
+    pollStatus();
   } catch (e) {
     loadError(`Couldn't load the list: ${e.message}`);
   }
@@ -351,7 +354,8 @@ function startRefreshCooldown() {
   const tick = () => {
     const left = refreshLeft();
     btn.disabled = left > 0;
-    btn.textContent = left > 0 ? `Refresh (${left}s)` : "Refresh";
+    btn.toggleAttribute("data-cooling", left > 0);
+    $(".lbl", btn).textContent = left > 0 ? `${left}s` : "Refresh";
     if (left > 0) refreshTimer = setTimeout(tick, 1000);
   };
   tick();
@@ -368,11 +372,16 @@ async function checkNow() {
   try {
     const r = await api("/api/check-now", { method: "POST" });
     store.set(CHECK_KEY, r.available_at);
-    say("Check started. Results show up here in about 5 minutes.");
+    run = { ...run, state: "queued", dispatched_at: new Date().toISOString() };
+    renderRun();
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(pollStatus, POLL_S * 1000);
+    say("Check started. It usually takes 1–5 minutes.");
   } catch (e) {
     if (e.status === 429 && e.data && e.data.available_at) {
       store.set(CHECK_KEY, e.data.available_at);
-      say("A check is already on its way. Results show up here in a few minutes.");
+      say("A check is already on its way.");
+      pollStatus();
     } else {
       say(e.message, true);
     }
@@ -389,6 +398,48 @@ function startCheckCooldown() {
     if (left > 0) checkTimer = setTimeout(tick, 1000);
   };
   tick();
+}
+
+// ---------- background check status ----------
+// The Worker records when a check was started, when the checker picked it up and when it reported back.
+// While one is queued or running we ask every POLL_S seconds and show its progress; when it ends, the
+// list is re-read at once so the new results appear without waiting for the next auto refresh.
+const POLL_S = 10;
+let run = { state: "idle" }, pollTimer, runTimer;
+
+async function pollStatus() {
+  clearTimeout(pollTimer);
+  const was = run.state;
+  try { run = await api("/api/check-status"); } catch { return; }   // keep the last known state
+  if (run.available_at && new Date(run.available_at) > Date.now()) {
+    store.set(CHECK_KEY, run.available_at);   // a check another device or the cron started also counts
+    startCheckCooldown();
+  }
+  renderRun();
+  if (was !== "idle" && run.state === "idle") {
+    say("Check finished. The list is up to date.");
+    refresh({ force: true });
+  } else if (run.state !== "idle" && document.visibilityState === "visible") {
+    pollTimer = setTimeout(pollStatus, POLL_S * 1000);
+  }
+}
+
+function renderRun() {
+  clearTimeout(runTimer);
+  const el = $("#run-status");
+  const active = run.state !== "idle" && watches.length > 0;
+  el.hidden = !active;
+  if (active) {
+    const since = Date.parse(run.state === "running" ? run.started_at : run.dispatched_at) || Date.now();
+    const s = Math.max(0, Math.round((Date.now() - since) / 1000));
+    const t = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+    $(".text", el).textContent = run.state === "running"
+      ? `Checking all pages… ${t}`
+      : `Queued, waiting for GitHub to start the check… ${t}`;
+    runTimer = setTimeout(renderRun, 1000);
+  }
+  $("#schedule-note").textContent =
+    (run.finished_at ? `Last check finished ${ago(run.finished_at)}. ` : "") + "Pages are checked every 10 minutes.";
 }
 
 // ---------- boot ----------
@@ -423,7 +474,11 @@ async function boot() {
   }
   refresh({ force: true });
   setInterval(() => { if (document.visibilityState === "visible") refresh(); }, AUTO_REFRESH_S * 1000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    refresh();
+    if (run.state !== "idle") pollStatus();   // polling pauses in the background
+  });
 }
 
 boot();

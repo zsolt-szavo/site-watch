@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""site-watch checker: fetch every watch, diff against the last check, send Web Push, report back.
+"""Web Change Watcher checker: fetch every watch, diff against the last check, send Web Push, report back.
 
 Env:
   API_URL            Worker base URL, e.g. https://site-watch.<you>.workers.dev
@@ -17,7 +17,11 @@ import json
 import os
 import re
 import sys
+import threading
+import time
 import xml.etree.ElementTree as ET
+from collections import defaultdict
+from urllib.parse import urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -33,6 +37,11 @@ EXTRACT_VERSION = "x2"  # x2: relative timestamps scrubbed
 MIN_TEXT = 200          # auto mode: less visible text than this ⇒ probably JS-rendered, retry in a browser
 MAX_TEXT = 200_000      # cap what we store in D1
 TIMEOUT = 30
+# Many sites rate-limit per IP, and GitHub's runners share theirs. So one run downloads each URL once,
+# spaces requests to the same site, and retries a 429/503 once after the site's Retry-After.
+HOST_GAP = 3.0          # seconds between two requests to the same site
+MAX_RETRY_WAIT = 20     # longest Retry-After we honour inside one run
+BLOCK_STATUSES = (403, 429, 503)
 # Signs of a bot wall (Cloudflare & co.). Only checked on short pages so real content mentioning them is fine.
 BLOCK_MARKERS = re.compile(
     r"just a moment|attention required|cf-chl|checking your browser|verify you are human|"
@@ -134,19 +143,108 @@ def looks_blocked(status, text):
 # ---------------------------------------------------------------- fetching
 
 def fetch_plain(url):
+    """Returns (status, text, retry_after_seconds or None)."""
     r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "en,hu;q=0.8"}, timeout=TIMEOUT)
     if r.encoding is None or r.encoding.lower() == "iso-8859-1":  # requests' default when no charset given
         r.encoding = r.apparent_encoding
-    return r.status_code, r.text
+    ra = r.headers.get("Retry-After", "")
+    return r.status_code, r.text, (int(ra) if ra.isdigit() else None)
+
+
+def host_of(url):
+    return (urlsplit(url).hostname or "").lower().removeprefix("www.")
+
+
+class Fetcher:
+    """Plain downloads for one run.
+
+    Each URL is fetched once (several watches often share a page), requests to one host are spaced
+    HOST_GAP apart, a 429/503 is retried once, and an answer that is still blocked (or a timeout) is
+    retried through the Worker: Cloudflare's network instead of GitHub's, whose shared IPs sites throttle.
+    Thread-safe as long as each host is handled by one thread (run() groups watches by host).
+    """
+
+    def __init__(self, api=None, token=None, gap=HOST_GAP, sleep=time.sleep):
+        self.api, self.token, self.gap, self.sleep = api, token, gap, sleep
+        self.cache, self.via = {}, {}       # url -> (status, body) | exception; url -> "worker" when proxied
+        self.last = defaultdict(lambda: float("-inf"))   # host -> time.monotonic() of the last request
+        self.lock = threading.Lock()
+
+    def wait_turn(self, url):
+        h = host_of(url)
+        with self.lock:
+            wait = self.last[h] + self.gap - time.monotonic()
+        if wait > 0:
+            self.sleep(wait)
+        with self.lock:
+            self.last[h] = time.monotonic()
+
+    def get(self, url):
+        if url not in self.cache:
+            try:
+                self.cache[url] = self._get(url)
+            except requests.RequestException as e:
+                self.cache[url] = e
+        r = self.cache[url]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    def _get(self, url):
+        self.wait_turn(url)
+        try:
+            status, body, retry_after = fetch_plain(url)
+            if status in (429, 503):
+                self.sleep(min(retry_after or 5, MAX_RETRY_WAIT))
+                self.wait_turn(url)
+                status, body, _ = fetch_plain(url)
+        except requests.RequestException:
+            proxied = self.via_worker(url)
+            if proxied is None:
+                raise
+            return proxied
+        if status in BLOCK_STATUSES:
+            proxied = self.via_worker(url)
+            if proxied is not None and proxied[0] < 400:   # e.g. 520 when the site drops Cloudflare too
+                return proxied
+        return status, body
+
+    def via_worker(self, url):
+        if not self.api:
+            return None
+        try:
+            r = requests.post(f"{self.api}/api/internal/fetch", headers={"Authorization": f"Bearer {self.token}"},
+                              json={"url": url, "ua": UA}, timeout=TIMEOUT + 10)
+            r.raise_for_status()
+            d = r.json()
+        except (requests.RequestException, ValueError) as e:
+            print(f"  worker fetch failed for {url}: {e}")
+            return None
+        self.via[url] = "worker"
+        return d["status"], d["body"]
 
 
 class Browser:
     """Lazily started headless Chromium, shared across watches. Not thread-safe: use from one thread."""
 
-    def __init__(self):
+    def __init__(self, fetcher=None):
         self.pw = self.browser = None
+        self.fetcher, self.cache = fetcher, {}
 
     def get(self, url):
+        if url not in self.cache:
+            if self.fetcher:
+                self.fetcher.wait_turn(url)
+            try:
+                self.cache[url] = self._get(url)
+            except Exception as e:
+                self.cache[url] = e
+        r = self.cache[url]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    def _get(self, url):
         if self.browser is None:
             from playwright.sync_api import sync_playwright
             self.pw = sync_playwright().start()
@@ -185,13 +283,13 @@ def extract(w, status, body):
     return apply_filters(html_to_lines(body, w.get("selector")), w)
 
 
-def check_plain(w):
-    """First pass, safe to run in threads. Returns lines, or None when a browser is needed."""
+def check_plain(w, fetcher):
+    """First pass, safe to run in threads (one per host). Returns lines, or None when a browser is needed."""
     mode = w.get("mode") or "auto"
     if mode == "browser":
         return None
     try:
-        status, body = fetch_plain(w["url"])
+        status, body = fetcher.get(w["url"])
     except requests.RequestException:
         if mode == "auto":
             return None  # timeout / reset: some sites only answer real browsers
@@ -259,27 +357,40 @@ def send_push(w, diff, vapid_key, subject):
 
 def run(api, token, vapid_key, subject, dry_run=False):
     auth = {"Authorization": f"Bearer {token}"}
-    r = requests.get(f"{api}/api/internal/jobs", headers=auth, timeout=TIMEOUT)
+    # ?start=1 tells the Worker a run began, which the app shows as "Checking…" until the report arrives.
+    r = requests.get(f"{api}/api/internal/jobs", params=None if dry_run else {"start": "1"}, headers=auth, timeout=TIMEOUT)
     r.raise_for_status()
     watches = r.json()
     print(f"{len(watches)} watch(es)")
 
+    fetcher = Fetcher(api, token)
+    by_host = defaultdict(list)
+    for w in watches:
+        by_host[host_of(w["url"])].append(w)
+
     lines_by_id, errors, need_browser = {}, {}, []
-    with cf.ThreadPoolExecutor(max_workers=8) as pool:
-        futs = {pool.submit(check_plain, w): w for w in watches}
-        for f in cf.as_completed(futs):
-            w = futs[f]
+
+    def plain_host(ws):  # one thread per host, so that host's requests go one after another
+        out = []
+        for w in ws:
             try:
-                lines = f.result()
-                if lines is None:
+                out.append((w, check_plain(w, fetcher), None))
+            except Exception as e:
+                out.append((w, None, str(e) or type(e).__name__))
+        return out
+
+    with cf.ThreadPoolExecutor(max_workers=8) as pool:
+        for f in cf.as_completed([pool.submit(plain_host, ws) for ws in by_host.values()]):
+            for w, lines, err in f.result():
+                if err:
+                    errors[w["id"]] = err
+                elif lines is None:
                     need_browser.append(w)
                 else:
                     lines_by_id[w["id"]] = lines
-            except Exception as e:
-                errors[w["id"]] = str(e) or type(e).__name__
 
     if need_browser:
-        browser = Browser()
+        browser = Browser(fetcher)
         try:
             for w in need_browser:
                 try:
@@ -291,7 +402,7 @@ def run(api, token, vapid_key, subject, dry_run=False):
 
     results, dead = [], set()
     for w in watches:
-        via = "browser" if w in need_browser else "plain"
+        via = "browser" if w in need_browser else fetcher.via.get(w["url"], "plain")
         if w["id"] in errors:
             print(f"[{w['name']}] ERROR ({via}): {errors[w['id']]}")
             results.append({"id": w["id"], "error": errors[w["id"]]})

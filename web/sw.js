@@ -1,5 +1,5 @@
 // Service worker: shows push alerts and keeps the app shell available offline.
-const CACHE = "site-watch-v3";
+const CACHE = "site-watch-v4";   // cache name is internal: keep the prefix so old caches get cleaned up
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.json", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -28,7 +28,7 @@ self.addEventListener("fetch", (e) => {
 self.addEventListener("push", (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data ? e.data.text() : "" }; }
-  e.waitUntil(self.registration.showNotification(d.title || "site-watch: page changed", {
+  e.waitUntil(self.registration.showNotification(d.title || "Web Change Watcher: page changed", {
     body: d.body || "",
     icon: "icons/icon-192.png",
     badge: "icons/icon-192.png",

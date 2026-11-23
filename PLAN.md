@@ -1,4 +1,4 @@
-# site-watch — plan
+# Web Change Watcher (repo: site-watch) — plan
 
 Self-hosted "notify me when this page changes". Free tiers only. No accounts or passcode:
 each device has a random id (localStorage) and sees only its own watches, at most 5 per device

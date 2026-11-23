@@ -7,7 +7,7 @@ DEV="smoke-$(date +%s)-$RANDOM-aaaaaaaa"; OTHER="smoke-other-$(date +%s)-$RANDOM
 D=(-H "X-Device-Id: $DEV"); O=(-H "X-Device-Id: $OTHER")
 pass=0; fail=0
 check() { # name expected_status actual_status [body]
-  if [[ "$2" == "$3" ]]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1 (want $2 got $3) $4"; fi; }
+  if [[ "$2" == "$3" ]]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1 (want $2 got $3) ${4:-}"; fi; }
 req() { curl -s -o /tmp/sw_body -w '%{http_code}' "$@"; }
 
 check "config"              200 "$(req $API/api/config)"
@@ -39,7 +39,14 @@ grep -q "$ID" /tmp/sw_body && check "my-subscriptions" 1 1 || check "my-subscrip
 check "jobs w/o token"      401 "$(req $API/api/internal/jobs)"
 check "jobs"                200 "$(req $API/api/internal/jobs -H "Authorization: Bearer $TOK")"
 grep -q 'push.example/abc' /tmp/sw_body && check "jobs include subs" 1 1 || check "jobs include subs" 1 0
+check "jobs start=1"        200 "$(req "$API/api/internal/jobs?start=1" -H "Authorization: Bearer $TOK")"
+req $API/api/check-status >/dev/null; grep -q '"state":"running"' /tmp/sw_body && check "status running" 1 1 || check "status running" 1 0 "$(cat /tmp/sw_body)"
+check "fetch w/o token"     401 "$(req -X POST $API/api/internal/fetch -d '{"url":"example.com"}')"
+check "fetch private ip"    400 "$(req -X POST $API/api/internal/fetch -H "Authorization: Bearer $TOK" -d '{"url":"http://127.0.0.1/"}')"
+check "fetch example.com"   200 "$(req -X POST $API/api/internal/fetch -H "Authorization: Bearer $TOK" -d '{"url":"example.com"}')"
+grep -q '"status":200' /tmp/sw_body && check "fetch body" 1 1 || check "fetch body" 1 0 "$(head -c 200 /tmp/sw_body)"
 check "report change"       200 "$(req -X POST $API/api/internal/report -H "Authorization: Bearer $TOK" -d "$REPORT")"
+req $API/api/check-status >/dev/null; grep -q '"state":"idle"' /tmp/sw_body && check "status idle after report" 1 1 || check "status idle after report" 1 0 "$(cat /tmp/sw_body)"
 req $API/api/watches/$ID "${D[@]}" >/dev/null
 grep -q '"last_diff":"+ new"' /tmp/sw_body && grep -q '"subscribers":0' /tmp/sw_body && check "report applied + dead sub removed" 1 1 || check "report applied" 1 0 "$(cat /tmp/sw_body)"
 grep -q 'last_text' /tmp/sw_body && check "public hides last_text" 1 0 || check "public hides last_text" 1 1
