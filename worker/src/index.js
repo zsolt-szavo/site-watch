@@ -412,7 +412,8 @@ async function route(req, env) {
       // Sites behind bot walls block some runs and not others (it depends on the runner's IP), so the app
       // only raises the alarm once a page has been blocked for a while: remember when the streak began.
       const blockKey = `blocked_since:${r.id}`;
-      stmts.push(/^blocked/i.test(String(r.error || ""))
+      // A site that doesn't answer ("not responding …", from the checker) gets the same grace.
+      stmts.push(/^(blocked|not responding)/i.test(String(r.error || ""))
         ? env.DB.prepare("INSERT OR IGNORE INTO meta (k, v) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM watches WHERE id = ?)")
           .bind(blockKey, t, r.id)
         : env.DB.prepare("DELETE FROM meta WHERE k = ?").bind(blockKey));

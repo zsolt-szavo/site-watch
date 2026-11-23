@@ -158,3 +158,5 @@ button.shot.broken::after { content: "no picture"; color: var(--muted); font-siz
 #shot-dialog h2 { font-size: var(--fs-body); text-transform: none; letter-spacing: 0; color: var(--text); }
 #shot-dialog img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; min-height: 120px; background: var(--diff-bg); }
 #shot-dialog .diff { max-height: none; margin: 0; }
+/* iOS Safari zooms into any field whose text is under 16px when it's tapped; labels are smaller, so set it here. */
+input, textarea, select { font-size: max(16px, 1rem); }
