@@ -296,21 +296,31 @@ async function saveEdit(ev) {
 }
 
 // Refresh only re-reads the list (checks run every 10 min, or via Check now), so once a minute is plenty.
+// Every background re-read (button, tab refocus, auto timer, page load) goes through refresh(), so they
+// share one 60 s cooldown. It lives in localStorage, so other tabs of this app respect it too.
+// The real limit is per IP in the Worker; this keeps the client from ever needing it.
 const REFRESH_COOLDOWN_S = 60;
-// The real limit is per IP in the Worker; this just keeps the button honest across page reloads.
+const AUTO_REFRESH_S = 120;   // while visible; longer than the cooldown so the button stays usable
 const REFRESH_KEY = "site-watch.refreshedAt";
-function refreshWithCooldown() {
+let refreshTimer;
+const refreshLeft = () =>
+  Math.ceil(REFRESH_COOLDOWN_S - (Date.now() - Number(store.get(REFRESH_KEY) || 0)) / 1000);
+
+// force: page load only (the list must show up); everything else is skipped during the cooldown.
+function refresh({ force = false } = {}) {
+  if (!force && refreshLeft() > 0) return;
   store.set(REFRESH_KEY, String(Date.now()));
   load();
   startRefreshCooldown();
 }
 function startRefreshCooldown() {
   const btn = $("#refresh");
+  clearTimeout(refreshTimer);
   const tick = () => {
-    const left = Math.ceil(REFRESH_COOLDOWN_S - (Date.now() - Number(store.get(REFRESH_KEY) || 0)) / 1000);
+    const left = refreshLeft();
     btn.disabled = left > 0;
     btn.textContent = left > 0 ? `Refresh (${left}s)` : "Refresh";
-    if (left > 0) setTimeout(tick, 1000);
+    if (left > 0) refreshTimer = setTimeout(tick, 1000);
   };
   tick();
 }
@@ -360,7 +370,7 @@ async function boot() {
   $("#check-now").addEventListener("click", checkNow);
   startCheckCooldown();
   $("#toast").addEventListener("click", (e) => { e.currentTarget.hidden = true; });
-  $("#refresh").addEventListener("click", refreshWithCooldown);
+  $("#refresh").addEventListener("click", () => refresh());
   startRefreshCooldown();
   $("#watches").addEventListener("change", (e) => { if (e.target.matches(".alert")) toggleAlert(e.target); });
   $("#watches").addEventListener("click", (e) => {
@@ -378,9 +388,9 @@ async function boot() {
       console.warn("service worker registration failed", e);
     }
   }
-  await load();
-  setInterval(() => { if (document.visibilityState === "visible") load(); }, 60_000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(); });
+  refresh({ force: true });
+  setInterval(() => { if (document.visibilityState === "visible") refresh(); }, AUTO_REFRESH_S * 1000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
 }
 
 boot();
