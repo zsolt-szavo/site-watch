@@ -1,13 +1,14 @@
 # site-watch — plan
 
-Self-hosted "notify me when this page changes". Free tiers only. Anyone with the
-invite code can add a site; anyone can subscribe to push alerts for a site.
+Self-hosted "notify me when this page changes". Free tiers only. No accounts or passcode:
+each device has a random id (localStorage) and sees only its own watches, at most 5 per device
+and 50 in total; the public API is rate-limited to 60 requests/min per IP.
 
 ## Architecture
 
 ```
  GitHub Pages (PWA)  ──HTTPS──▶  Cloudflare Worker + D1   ◀──HTTPS──  GitHub Actions (every 10 min)
- - add URL (invite code)          - stores watches, push       - GET jobs (Bearer token)
+ - add URL (per-device list)      - stores watches, push       - GET jobs (Bearer token)
  - list watches + last change       subscriptions, state       - fetch page (plain, fallback headless
  - subscribe/unsubscribe push     - public API + internal        Chromium for JS-heavy sites)
  - service worker shows push        API for the checker        - diff → Web Push (VAPID) to subscribers
@@ -19,7 +20,7 @@ invite code can add a site; anyone can subscribe to push alerts for a site.
 - **API**: Cloudflare Worker (`/worker`), D1 (SQLite). No CPU-heavy work here.
 - **Checker**: GitHub Actions (`/checker`, Python). Public repo ⇒ unlimited minutes.
   Sends Web Push itself (pywebpush), VAPID private key in Actions secrets.
-- **Secrets**: `CHECKER_TOKEN` (Worker ↔ Actions), `INVITE_CODE` (Worker),
+- **Secrets**: `CHECKER_TOKEN` (Worker ↔ Actions),
   `VAPID_PRIVATE_KEY` (Actions), VAPID public key is public.
 
 ## Phases (one session each)

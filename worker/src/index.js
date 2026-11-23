@@ -1,8 +1,9 @@
 // site-watch API. Stores watches + push subscriptions in D1.
 // Public:   GET  /api/config, GET /api/watches, GET /api/watches/:id
-//           POST /api/watches            {url, name?, selector?, contains?, ignore?, mode?}  header X-Invite-Code
-//           PATCH /api/watches/:id       same fields                                           header X-Invite-Code
-//           DELETE /api/watches/:id                                                            header X-Invite-Code
+//           POST /api/watches            {url, name?, selector?, contains?, ignore?, mode?}
+//           PATCH /api/watches/:id       same fields
+//           DELETE /api/watches/:id
+//           Every watch route needs header X-Device-Id: each device only sees and changes its own watches.
 //           POST /api/subscribe          {watch_id, subscription}
 //           POST /api/unsubscribe        {watch_id, endpoint}
 //           POST /api/my-subscriptions   {endpoint}  -> [watch_id]
@@ -21,7 +22,7 @@ function cors(req, env) {
   return {
     "Access-Control-Allow-Origin": origin && allowed.includes(origin) ? origin : allowed[0] || "*",
     "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,X-Invite-Code,Authorization",
+    "Access-Control-Allow-Headers": "Content-Type,X-Device-Id,Authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
@@ -41,10 +42,11 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-function requireInvite(req, env) {
-  if (!env.INVITE_CODE) throw new HttpError(500, "INVITE_CODE not configured");
-  if (!timingSafeEqual(req.headers.get("X-Invite-Code") || "", env.INVITE_CODE))
-    throw new HttpError(403, "wrong passcode");
+// Random id the PWA keeps in localStorage. There are no accounts: knowing the id is what owns the watches.
+function deviceId(req) {
+  const id = req.headers.get("X-Device-Id") || "";
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(id)) throw new HttpError(400, "missing or invalid device id");
+  return id;
 }
 
 function requireChecker(req, env) {
@@ -98,10 +100,10 @@ function publicWatch(row) {
   return { ...row, ignore: JSON.parse(row.ignore || "[]") };
 }
 
-async function getWatch(env, id) {
+async function getWatch(env, id, dev) {
   const row = await env.DB.prepare(
     `SELECT ${PUBLIC_COLS}, (SELECT COUNT(*) FROM subscriptions s WHERE s.watch_id = w.id) AS subscribers
-     FROM watches w WHERE w.id = ?`).bind(id).first();
+     FROM watches w WHERE w.id = ? AND w.device_id = ?`).bind(id, dev).first();
   if (!row) throw new HttpError(404, "watch not found");
   return publicWatch(row);
 }
@@ -132,27 +134,30 @@ async function route(req, env) {
   if (m === "GET" && path === "/api/watches") {
     const { results } = await env.DB.prepare(
       `SELECT ${PUBLIC_COLS}, (SELECT COUNT(*) FROM subscriptions s WHERE s.watch_id = w.id) AS subscribers
-       FROM watches w ORDER BY w.created_at DESC`).all();
+       FROM watches w WHERE w.device_id = ? ORDER BY w.created_at DESC`).bind(deviceId(req)).all();
     return json(results.map(publicWatch));
   }
 
-  if (m === "GET" && idMatch) return json(await getWatch(env, idMatch[1]));
+  if (m === "GET" && idMatch) return json(await getWatch(env, idMatch[1], deviceId(req)));
 
   if (m === "POST" && path === "/api/watches") {
-    requireInvite(req, env);
+    const dev = deviceId(req);
     const f = cleanFields(await body(req));
-    const { n } = await env.DB.prepare("SELECT COUNT(*) AS n FROM watches").first();
-    if (n >= Number(env.MAX_WATCHES || 100)) throw new HttpError(429, "watch limit reached");
+    const { total, mine } = await env.DB.prepare(
+      "SELECT COUNT(*) AS total, COALESCE(SUM(device_id = ?), 0) AS mine FROM watches").bind(dev).first();
+    const perDevice = Number(env.MAX_WATCHES_PER_DEVICE || 5), overall = Number(env.MAX_WATCHES || 50);
+    if (mine >= perDevice) throw new HttpError(429, `this device already has ${perDevice} watches; delete one first`);
+    if (total >= overall) throw new HttpError(429, `all ${overall} watch slots are in use`);
     const id = crypto.randomUUID().slice(0, 8);
     await env.DB.prepare(
-      `INSERT INTO watches (id, url, name, selector, contains, ignore, mode, created_at) VALUES (?,?,?,?,?,?,?,?)`)
-      .bind(id, f.url, f.name, f.selector ?? null, f.contains ?? null, f.ignore ?? "[]", f.mode ?? "auto", now()).run();
-    return json(await getWatch(env, id), 201);
+      `INSERT INTO watches (id, device_id, url, name, selector, contains, ignore, mode, created_at) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .bind(id, dev, f.url, f.name, f.selector ?? null, f.contains ?? null, f.ignore ?? "[]", f.mode ?? "auto", now()).run();
+    return json(await getWatch(env, id, dev), 201);
   }
 
   if (m === "PATCH" && idMatch) {
-    requireInvite(req, env);
-    await getWatch(env, idMatch[1]);
+    const dev = deviceId(req);
+    await getWatch(env, idMatch[1], dev);
     const f = cleanFields(await body(req), true);
     const keys = Object.keys(f);
     if (keys.length) {
@@ -161,11 +166,11 @@ async function route(req, env) {
       const sets = keys.map((k) => `${k} = ?`).concat(reset ? ["last_hash = NULL", "last_text = NULL", "last_error = NULL"] : []);
       await env.DB.prepare(`UPDATE watches SET ${sets.join(", ")} WHERE id = ?`).bind(...keys.map((k) => f[k]), idMatch[1]).run();
     }
-    return json(await getWatch(env, idMatch[1]));
+    return json(await getWatch(env, idMatch[1], dev));
   }
 
   if (m === "DELETE" && idMatch) {
-    requireInvite(req, env);
+    await getWatch(env, idMatch[1], deviceId(req));
     await env.DB.batch([
       env.DB.prepare("DELETE FROM subscriptions WHERE watch_id = ?").bind(idMatch[1]),
       env.DB.prepare("DELETE FROM watches WHERE id = ?").bind(idMatch[1]),
@@ -175,7 +180,7 @@ async function route(req, env) {
 
   if (m === "POST" && path === "/api/subscribe") {
     const b = await body(req);
-    await getWatch(env, String(b.watch_id || ""));
+    await getWatch(env, String(b.watch_id || ""), deviceId(req));
     const s = validSubscription(b.subscription);
     await env.DB.prepare(
       `INSERT INTO subscriptions (endpoint, watch_id, keys, created_at) VALUES (?,?,?,?)

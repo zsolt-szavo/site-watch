@@ -10,8 +10,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 ROOT = Path.home() / "Code/site-watch"
-env_vars = dict(l.split("=", 1) for l in (ROOT / "worker/.dev.vars").read_text().split() if "=" in l)
-INVITE = env_vars["INVITE_CODE"].strip().strip('"')
 NAME = f"e2e FF {int(time.time())}"
 HERE = Path(__file__).parent  # screenshot lands here (git-ignored)
 
@@ -45,7 +43,6 @@ try:
     w8.until(lambda d: d.execute_script("return !!document.querySelector('#watches')"))
     d.find_element(By.NAME, "url").send_keys("news.ycombinator.com/newest")
     d.find_element(By.NAME, "name").send_keys(NAME)
-    inv = d.find_element(By.NAME, "invite"); inv.clear(); inv.send_keys(INVITE)
     d.find_element(By.CSS_SELECTOR, "button[type=submit]").click()
     wid = w8.until(card_id); print("added", wid)
 

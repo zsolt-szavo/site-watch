@@ -10,14 +10,16 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 ROOT = Path.home() / "Code/site-watch"
-env_vars = dict(l.split("=", 1) for l in (ROOT / "worker/.dev.vars").read_text().split() if "=" in l)
-INVITE = env_vars["INVITE_CODE"].strip().strip('"')
 API = "http://localhost:8787"
 NAME = f"e2e edit {int(time.time())}"
 
 
+DEVICE = None  # the browser's device id (watches are private to it); read after the page loads
+
+
 def server_watch(wid):
-    with urllib.request.urlopen(f"{API}/api/watches/{wid}") as r:
+    req = urllib.request.Request(f"{API}/api/watches/{wid}", headers={"X-Device-Id": DEVICE})
+    with urllib.request.urlopen(req) as r:
         return json.load(r)
 
 
@@ -48,10 +50,11 @@ wid = None
 try:
     d.get("http://localhost:8000/")
     w8.until(lambda d: d.execute_script("return !!document.querySelector('#watches')"))
+    DEVICE = d.execute_script("return localStorage.getItem('site-watch.device')")
+    assert DEVICE, "no device id in localStorage"
     add = d.find_element(By.ID, "add")
     add.find_element(By.NAME, "url").send_keys("example.com")
     add.find_element(By.NAME, "name").send_keys(NAME)
-    inv = add.find_element(By.NAME, "invite"); inv.clear(); inv.send_keys(INVITE)
     add.find_element(By.CSS_SELECTOR, "button[type=submit]").click()
     wid = w8.until(lambda d: card_id(d, NAME))
 
@@ -59,7 +62,6 @@ try:
     d.find_element(By.CSS_SELECTOR, f".watch[data-id='{wid}'] .edit").click()
     f = d.find_element(By.ID, "edit")
     assert f.find_element(By.NAME, "name").get_attribute("value") == NAME
-    assert f.find_element(By.NAME, "invite").get_attribute("value") == INVITE, "invite not remembered"
     f.find_element(By.CSS_SELECTOR, ".cancel").click()
     print("ok   prefilled + cancel")
 
@@ -76,6 +78,6 @@ try:
     print("PASS")
 finally:
     if wid:
-        req = urllib.request.Request(f"{API}/api/watches/{wid}", method="DELETE", headers={"X-Invite-Code": INVITE})
+        req = urllib.request.Request(f"{API}/api/watches/{wid}", method="DELETE", headers={"X-Device-Id": DEVICE})
         urllib.request.urlopen(req).read()
     d.quit()

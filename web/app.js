@@ -2,7 +2,6 @@
 // site-watch PWA. Talks to the Worker API (worker/src/index.js); API base comes from config.js.
 
 const API = window.SITE_WATCH_API;
-const INVITE_KEY = "site-watch.invite";
 const $ = (s, el = document) => el.querySelector(s);
 
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
@@ -21,11 +20,19 @@ const store = {
   set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* ignore */ } },
 };
 
+// ---------- device identity ----------
+// No accounts: a random id in localStorage owns this device's watches. Clearing site data loses them.
+const DEVICE_KEY = "site-watch.device";
+const DEVICE_ID = store.get(DEVICE_KEY) || (() => {
+  const id = crypto.randomUUID();
+  store.set(DEVICE_KEY, id);
+  return id;
+})();
+
 // ---------- API ----------
-async function api(path, { method = "GET", body, invite } = {}) {
-  const headers = {};
+async function api(path, { method = "GET", body } = {}) {
+  const headers = { "X-Device-Id": DEVICE_ID };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (invite) headers["X-Invite-Code"] = invite;
   let res;
   try {
     res = await fetch(API + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -176,7 +183,6 @@ async function addWatch(ev) {
   ev.preventDefault();
   const f = ev.target;
   const v = (n) => f.elements[n].value.trim();
-  const invite = v("invite");
   const body = { url: v("url"), name: v("name"), mode: f.elements.mode.value };
   if (v("selector")) body.selector = v("selector");
   if (v("contains")) body.contains = v("contains");
@@ -185,14 +191,12 @@ async function addWatch(ev) {
   const btn = $("button[type=submit]", f);
   btn.disabled = true;
   try {
-    const w = await api("/api/watches", { method: "POST", body, invite });
-    store.set(INVITE_KEY, invite);
+    const w = await api("/api/watches", { method: "POST", body });
     for (const n of ["url", "name", "selector", "contains", "ignore"]) f.elements[n].value = "";
     f.elements.mode.value = "auto";
     say(`Added ${w.name}. The first check stores a baseline; alerts start after that.`);
     await load();
   } catch (e) {
-    if (e.status === 403) { store.set(INVITE_KEY, ""); f.elements.invite.value = ""; f.elements.invite.focus(); }
     say(e.message, true);
   } finally {
     btn.disabled = false;
@@ -202,17 +206,13 @@ async function addWatch(ev) {
 async function deleteWatch(btn) {
   const li = btn.closest(".watch");
   const w = watches.find((x) => x.id === li.dataset.id);
-  let invite = store.get(INVITE_KEY) || $("#add").elements.invite.value.trim();
-  if (!invite) invite = (prompt("Passcode:") || "").trim();
-  if (!invite || !confirm(`Stop watching ${w ? w.name : "this page"} for everyone?`)) return;
+  if (!confirm(`Stop watching ${w ? w.name : "this page"}?`)) return;
   btn.disabled = true;
   try {
-    await api(`/api/watches/${encodeURIComponent(li.dataset.id)}`, { method: "DELETE", invite });
-    store.set(INVITE_KEY, invite);
+    await api(`/api/watches/${encodeURIComponent(li.dataset.id)}`, { method: "DELETE" });
     say("Deleted.");
     await load();
   } catch (e) {
-    if (e.status === 403) store.set(INVITE_KEY, "");
     say(e.message, true);
     btn.disabled = false;
   }
@@ -230,7 +230,6 @@ function openEdit(btn) {
   for (const n of ["url", "name", "selector", "contains"]) f.elements[n].value = w[n] || "";
   f.elements.ignore.value = (w.ignore || []).join("\n");
   f.elements.mode.value = w.mode || "auto";
-  f.elements.invite.value = store.get(INVITE_KEY) || $("#add").elements.invite.value.trim();
   $("#edit-dialog").showModal();
 }
 
@@ -238,7 +237,6 @@ async function saveEdit(ev) {
   ev.preventDefault();
   const f = ev.target;
   const v = (n) => f.elements[n].value.trim();
-  const invite = v("invite");
   const w0 = watches.find((x) => x.id === editing) || {};
   const all = {
     url: v("url"), name: v("name"), selector: v("selector") || null, contains: v("contains") || null,
@@ -252,13 +250,11 @@ async function saveEdit(ev) {
   const btn = $("button[type=submit]", f);
   btn.disabled = true;
   try {
-    const w = await api(`/api/watches/${encodeURIComponent(editing)}`, { method: "PATCH", body, invite });
-    store.set(INVITE_KEY, invite);
+    const w = await api(`/api/watches/${encodeURIComponent(editing)}`, { method: "PATCH", body });
     $("#edit-dialog").close();
     say(`Saved ${w.name}.`);
     await load();
   } catch (e) {
-    if (e.status === 403) { store.set(INVITE_KEY, ""); f.elements.invite.value = ""; f.elements.invite.focus(); }
     say(e.message, true);
   } finally {
     btn.disabled = false;
@@ -287,7 +283,6 @@ function startRefreshCooldown() {
 
 // ---------- boot ----------
 async function boot() {
-  $("#add").elements.invite.value = store.get(INVITE_KEY);
   $("#ios-hint").hidden = !(isIOS && !isStandalone);
   $("#push-unsupported").hidden = pushSupported || isIOS;
 
