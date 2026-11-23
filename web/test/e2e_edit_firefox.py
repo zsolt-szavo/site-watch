@@ -52,11 +52,24 @@ try:
     w8.until(lambda d: d.execute_script("return !!document.querySelector('#watches')"))
     DEVICE = d.execute_script("return localStorage.getItem('site-watch.device')")
     assert DEVICE, "no device id in localStorage"
+    # Add happens in a dialog opened from the header; a bad address shows its error inside the dialog.
+    d.find_element(By.ID, "open-add").click()
     add = d.find_element(By.ID, "add")
+    add.find_element(By.NAME, "url").send_keys("localhost")
+    add.find_element(By.CSS_SELECTOR, "button[type=submit]").click()
+    w8.until(lambda d: add.find_element(By.CSS_SELECTOR, ".form-error").is_displayed())
+    assert d.find_element(By.ID, "add-dialog").get_attribute("open") is not None
+    add.find_element(By.NAME, "url").clear()
     add.find_element(By.NAME, "url").send_keys("example.com")
     add.find_element(By.NAME, "name").send_keys(NAME)
     add.find_element(By.CSS_SELECTOR, "button[type=submit]").click()
     wid = w8.until(lambda d: card_id(d, NAME))
+    assert d.find_element(By.ID, "add-dialog").get_attribute("open") is None
+    assert "Added" in d.find_element(By.ID, "toast").text
+    meta = d.find_element(By.CSS_SELECTOR, f".watch[data-id='{wid}'] .meta").text
+    assert meta == "Waiting for the first check", meta
+    assert d.find_element(By.ID, "check-now").is_displayed()
+    print("ok   add dialog, toast, status line")
 
     # Dialog is prefilled from the watch.
     d.find_element(By.CSS_SELECTOR, f".watch[data-id='{wid}'] .edit").click()

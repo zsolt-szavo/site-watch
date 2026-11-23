@@ -9,8 +9,15 @@ ALLOWED_ORIGINS = "https://zsolt-szavo.github.io,http://localhost:8000,http://12
 VAPID_PUBLIC_KEY = "BDHINJK7bO3xMpSf-WFTRrPRcy9gmKZX1sMNHwv570ex-iTsHRCu_LhgP_vxtHWgx7muJPB-Dfl9pHgr1OsIw04"
 MAX_WATCHES = "50"            # across all devices
 MAX_WATCHES_PER_DEVICE = "5"
+GH_REPO = "zsolt-szavo/site-watch"   # repo whose check.yml the Worker starts (cron + "Check now")
+CHECK_COOLDOWN_S = "300"             # at most one started check per 5 min, shared by all devices
 
-# Secret (wrangler secret put …; locally in .dev.vars): CHECKER_TOKEN
+# Start the checker every 10 min from here: GitHub's own cron is late or skipped for small repos.
+[triggers]
+crons = ["*/10 * * * *"]
+
+# Secrets (wrangler secret put …; locally in .dev.vars): CHECKER_TOKEN,
+# GH_DISPATCH_TOKEN (fine-grained PAT, only this repo, permission Actions: read and write)
 
 # Public API: at most 60 requests per minute per IP address.
 [[ratelimits]]

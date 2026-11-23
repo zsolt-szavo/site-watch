@@ -40,19 +40,36 @@ async function api(path, { method = "GET", body } = {}) {
     throw Object.assign(new Error("Can't reach the server. Check your connection."), { status: 0 });
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status, data });
   return data;
 }
 
 // ---------- messages ----------
-let msgTimer;
+// Short feedback goes to a toast at the bottom; tap to dismiss. Errors stay a little longer.
+let toastTimer;
 function say(text, isError = false) {
-  const el = $("#msg");
+  const el = $("#toast");
   el.textContent = text;
-  el.className = "msg" + (isError ? " error" : "");
+  el.className = "toast" + (isError ? " error" : "");
+  el.hidden = true;            // restart the slide-in animation
+  void el.offsetWidth;
   el.hidden = false;
-  clearTimeout(msgTimer);
-  if (!isError) msgTimer = setTimeout(() => { el.hidden = true; }, 4000);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 8000 : 3500);
+}
+
+// Errors while a dialog is open show inside it: a modal dialog covers the toast.
+function formError(form, text) {
+  const el = $(".form-error", form);
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+
+// A failed list load stays on screen until the next successful load.
+function loadError(text) {
+  const el = $("#load-error");
+  el.textContent = text || "";
+  el.hidden = !text;
 }
 
 // ---------- rendering ----------
@@ -73,10 +90,18 @@ function status(w) {
   return ["ok", "ok"];
 }
 
+// "Checked 5 min ago · changed 2 h ago" / "· no changes yet". The first check only stores a baseline.
+function metaLine(w) {
+  if (!w.last_checked) return "Waiting for the first check";
+  return `Checked ${ago(w.last_checked)} · ` + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
+}
+
 function render() {
   const list = $("#watches");
   list.replaceChildren();
   $("#empty").hidden = watches.length > 0;
+  $("#check-now").hidden = watches.length === 0;
+  $("#schedule-note").hidden = watches.length === 0;
   const canPush = pushSupported && (!isIOS || isStandalone);
   for (const w of watches) {
     const li = $("#watch-tpl").content.firstElementChild.cloneNode(true);
@@ -90,9 +115,8 @@ function render() {
     badge.className = `badge ${cls}`;
     badge.textContent = label;
     const meta = $(".meta", li);
-    meta.textContent = `Checked ${ago(w.last_checked)} · last change ${ago(w.last_change)}` +
-      (w.subscribers ? ` · ${w.subscribers} subscribed` : "");
-    meta.title = `Checked: ${w.last_checked || "never"}\nLast change: ${w.last_change || "never"}`;
+    meta.textContent = metaLine(w);
+    meta.title = `Checked: ${w.last_checked || "not yet"}\nLast change: ${w.last_change || "none seen yet"}`;
     if (w.last_diff) { const d = $(".diff", li); d.textContent = w.last_diff; d.hidden = false; }
     if (w.last_error) { const e = $(".error", li); e.textContent = w.last_error; e.hidden = false; }
     const box = $(".alert", li);
@@ -107,9 +131,10 @@ async function load() {
   try {
     watches = await api("/api/watches");
     await loadMySubs();
+    loadError("");
     render();
   } catch (e) {
-    say(`Couldn't load the list: ${e.message}`, true);
+    loadError(`Couldn't load the list: ${e.message}`);
   }
 }
 
@@ -163,12 +188,12 @@ async function toggleAlert(box) {
       const sub = await ensureSub();
       await api("/api/subscribe", { method: "POST", body: { watch_id: id, subscription: sub.toJSON() } });
       mySubs.add(id);
-      say("Alerts on. You'll get a notification when this page changes.");
+      say("🔔 Alerts on. You'll get a notification when this page changes.");
     } else {
       const sub = await currentSub();
       if (sub) await api("/api/unsubscribe", { method: "POST", body: { watch_id: id, endpoint: sub.endpoint } });
       mySubs.delete(id);
-      say("Alerts off for this page.");
+      say("🔕 Alerts off for this page.");
     }
   } catch (e) {
     say(e.message, true);
@@ -190,14 +215,15 @@ async function addWatch(ev) {
   if (ignore.length) body.ignore = ignore;
   const btn = $("button[type=submit]", f);
   btn.disabled = true;
+  formError(f, "");
   try {
     const w = await api("/api/watches", { method: "POST", body });
-    for (const n of ["url", "name", "selector", "contains", "ignore"]) f.elements[n].value = "";
-    f.elements.mode.value = "auto";
+    f.reset();
+    $("#add-dialog").close();
     say(`Added ${w.name}. The first check stores a baseline; alerts start after that.`);
     await load();
   } catch (e) {
-    say(e.message, true);
+    formError(f, e.message);
   } finally {
     btn.disabled = false;
   }
@@ -221,6 +247,13 @@ async function deleteWatch(btn) {
 // ---------- edit ----------
 let editing = null;   // id of the watch open in the edit dialog
 
+function openAdd() {
+  const f = $("#add");
+  formError(f, "");
+  $("#add-dialog").showModal();
+  f.elements.url.focus();
+}
+
 function openEdit(btn) {
   const w = watches.find((x) => x.id === btn.closest(".watch").dataset.id);
   if (!w) return;
@@ -230,6 +263,7 @@ function openEdit(btn) {
   for (const n of ["url", "name", "selector", "contains"]) f.elements[n].value = w[n] || "";
   f.elements.ignore.value = (w.ignore || []).join("\n");
   f.elements.mode.value = w.mode || "auto";
+  formError(f, "");
   $("#edit-dialog").showModal();
 }
 
@@ -255,13 +289,13 @@ async function saveEdit(ev) {
     say(`Saved ${w.name}.`);
     await load();
   } catch (e) {
-    say(e.message, true);
+    formError(f, e.message);
   } finally {
     btn.disabled = false;
   }
 }
 
-// Refresh only re-reads the list (checks run on GitHub's schedule), so once a minute is plenty.
+// Refresh only re-reads the list (checks run every 10 min, or via Check now), so once a minute is plenty.
 const REFRESH_COOLDOWN_S = 60;
 // The real limit is per IP in the Worker; this just keeps the button honest across page reloads.
 const REFRESH_KEY = "site-watch.refreshedAt";
@@ -281,12 +315,51 @@ function startRefreshCooldown() {
   tick();
 }
 
+// ---------- check now ----------
+// Starts the GitHub checker right away. The server allows one start per 5 min for everyone and
+// returns when the next one is allowed; we remember that so the button can count down.
+const CHECK_KEY = "site-watch.checkAvailableAt";
+let checkTimer;
+async function checkNow() {
+  const btn = $("#check-now");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/check-now", { method: "POST" });
+    store.set(CHECK_KEY, r.available_at);
+    say("Check started. Results show up here in about 5 minutes.");
+  } catch (e) {
+    if (e.status === 429 && e.data && e.data.available_at) {
+      store.set(CHECK_KEY, e.data.available_at);
+      say("A check is already on its way. Results show up here in a few minutes.");
+    } else {
+      say(e.message, true);
+    }
+  }
+  startCheckCooldown();
+}
+function startCheckCooldown() {
+  const btn = $("#check-now");
+  clearTimeout(checkTimer);
+  const tick = () => {
+    const left = Math.ceil((new Date(store.get(CHECK_KEY) || 0).getTime() - Date.now()) / 1000);
+    btn.disabled = left > 0;
+    btn.textContent = left > 0 ? `Check now (${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")})` : "Check now";
+    if (left > 0) checkTimer = setTimeout(tick, 1000);
+  };
+  tick();
+}
+
 // ---------- boot ----------
 async function boot() {
   $("#ios-hint").hidden = !(isIOS && !isStandalone);
   $("#push-unsupported").hidden = pushSupported || isIOS;
 
   $("#add").addEventListener("submit", addWatch);
+  $("#open-add").addEventListener("click", openAdd);
+  $("#add .cancel").addEventListener("click", () => $("#add-dialog").close());
+  $("#check-now").addEventListener("click", checkNow);
+  startCheckCooldown();
+  $("#toast").addEventListener("click", (e) => { e.currentTarget.hidden = true; });
   $("#refresh").addEventListener("click", refreshWithCooldown);
   startRefreshCooldown();
   $("#watches").addEventListener("change", (e) => { if (e.target.matches(".alert")) toggleAlert(e.target); });

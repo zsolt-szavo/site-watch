@@ -19,12 +19,27 @@ body {
 }
 header { display: flex; align-items: center; gap: 10px; max-width: 720px; margin: 0 auto; padding: 16px; }
 header img { border-radius: 8px; }
-h1 { font-size: 1.3rem; margin: 0; flex: 1; }
+h1 { font-size: 1.3rem; margin: 0; flex: 1; min-width: 0; }
+header button { white-space: nowrap; }
+header button:not(.ghost) { padding: 6px 12px; }
 h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 28px 0 10px; }
 main { max-width: 720px; margin: 0 auto; padding: 0 16px 48px; }
 .muted { color: var(--muted); }
 a { color: var(--accent); }
 
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 28px 0 10px; }
+.section-head h2 { margin: 0; }
+#schedule-note { margin-top: 10px; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 10;
+  bottom: calc(16px + env(safe-area-inset-bottom)); width: max-content; max-width: calc(100vw - 32px);
+  background: var(--text); color: var(--bg); border-radius: 10px; padding: 10px 16px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / .25); font-size: .95rem; cursor: pointer;
+  animation: toast-in .18s ease-out;
+}
+.toast.error { background: #b91c1c; color: #fff; font-size: .95rem; margin: 0; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 .hint, .msg { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 12px 14px; margin: 8px 0; }
 .hint { border-left: 4px solid var(--accent); }
 .msg.error { border-left: 4px solid var(--bad); }
