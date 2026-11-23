@@ -45,11 +45,47 @@ check "fetch w/o token"     401 "$(req -X POST $API/api/internal/fetch -d '{"url
 check "fetch private ip"    400 "$(req -X POST $API/api/internal/fetch -H "Authorization: Bearer $TOK" -d '{"url":"http://127.0.0.1/"}')"
 check "fetch example.com"   200 "$(req -X POST $API/api/internal/fetch -H "Authorization: Bearer $TOK" -d '{"url":"example.com"}')"
 grep -q '"status":200' /tmp/sw_body && check "fetch body" 1 1 || check "fetch body" 1 0 "$(head -c 200 /tmp/sw_body)"
+# Screenshots: history = first baseline + each change (newest SHOT_HISTORY kept), plus the latest check.
+jpg() { printf '\xff\xd8\xff\xe0%s' "$1" | base64; }
+TA="Authorization: Bearer $TOK"
+rep() { req -X POST $API/api/internal/report -H "$TA" -d '{"results":[{"id":"'$ID'","changed":'$1',"hash":"h","text":"t","diff":"d'$2'","shot":"'$(jpg $2)'"}]}'; }
+kinds() { req $API/api/watches/$ID/shots "${D[@]}" >/dev/null; python3 -c 'import json;print(" ".join(s["kind"] + ":" + (s["diff"] or "") for s in json.load(open("/tmp/sw_body"))))'; }
+shotis() { # name index-in-list expected-payload
+  local sid code; req $API/api/watches/$ID/shots "${D[@]}" >/dev/null
+  sid=$(python3 -c 'import json,sys;print(json.load(open("/tmp/sw_body"))[int(sys.argv[1])]["id"])' "$2")
+  code=$(curl -s -o /tmp/sw_shot -w '%{http_code}|%{content_type}' "$API/api/watches/$ID/shots/$sid" "${D[@]}")
+  [[ "$code|$(base64 < /tmp/sw_shot)" == "200|image/jpeg|$(jpg $3)" ]] && check "$1" 1 1 || check "$1" 1 0 "$code"; }
+check "no shots yet"        200 "$(req $API/api/watches/$ID/shots "${D[@]}")"
+grep -qx '\[\]' /tmp/sw_body && check "empty history" 1 1 || check "empty history" 1 0 "$(cat /tmp/sw_body)"
+check "report baseline+shot" 200 "$(rep false A)"
+check "history after baseline" "latest: baseline:" "$(kinds)"
+shotis "baseline image" 1 A
+req $API/api/watches "${D[@]}" >/dev/null
+grep -q '"has_shots":true' /tmp/sw_body && check "list has_shots" 1 1 || check "list has_shots" 1 0 "$(head -c 300 /tmp/sw_body)"
+check "report unchanged"    200 "$(rep false B)"
+check "unchanged only moves latest" "latest: baseline:" "$(kinds)"
+shotis "latest image" 0 B
+for i in 1 2 3 4; do rep true C$i >/dev/null; done
+check "changes kept"        "latest: change:dC4 change:dC3 change:dC2 change:dC1 baseline:" "$(kinds)"
+rep true C5 >/dev/null
+check "oldest dropped at 5" "latest: change:dC5 change:dC4 change:dC3 change:dC2 change:dC1" "$(kinds)"
+shotis "change image" 1 C5
+check "report not-jpeg shot" 200 "$(req -X POST $API/api/internal/report -H "$TA" -d '{"results":[{"id":"'$ID'","changed":false,"hash":"h","text":"t","shot":"aGVsbG8="}]}')"
+shotis "not-jpeg ignored" 0 C5
+check "report shot for deleted watch" 200 "$(req -X POST $API/api/internal/report -H "$TA" -d '{"results":[{"id":"gone1234","changed":true,"hash":"h","text":"t","shot":"'$(jpg X)'"}]}')"
+check "shots other device"  404 "$(req $API/api/watches/$ID/shots "${O[@]}")"
+check "shot other device"   404 "$(req $API/api/watches/$ID/shots/1 "${O[@]}")"
+check "shots w/o device id" 400 "$(req $API/api/watches/$ID/shots)"
+check "shot unknown id"     404 "$(req $API/api/watches/$ID/shots/999999 "${D[@]}")"
+REPORT='{"results":[{"id":"'$ID'","changed":true,"hash":"h","text":"t","diff":"+ new","shot":"'$(jpg Z)'"}],"dead_endpoints":["https://push.example/abc"]}'
 check "report change"       200 "$(req -X POST $API/api/internal/report -H "Authorization: Bearer $TOK" -d "$REPORT")"
 req $API/api/check-status >/dev/null; grep -q '"state":"idle"' /tmp/sw_body && check "status idle after report" 1 1 || check "status idle after report" 1 0 "$(cat /tmp/sw_body)"
 req $API/api/watches/$ID "${D[@]}" >/dev/null
 grep -q '"last_diff":"+ new"' /tmp/sw_body && grep -q '"subscribers":0' /tmp/sw_body && check "report applied + dead sub removed" 1 1 || check "report applied" 1 0 "$(cat /tmp/sw_body)"
 grep -q 'last_text' /tmp/sw_body && check "public hides last_text" 1 0 || check "public hides last_text" 1 1
+check "history still 5"     "latest: change:+ new change:dC5 change:dC4 change:dC3 change:dC2" "$(kinds)"
+check "patch filter"        200 "$(req -X PATCH $API/api/watches/$ID "${D[@]}" -d '{"contains":"x"}')"
+check "re-baseline drops shots" "" "$(kinds)"
 check "delete"              200 "$(req -X DELETE $API/api/watches/$ID "${D[@]}")"
 check "gone"                404 "$(req $API/api/watches/$ID "${D[@]}")"
 # Per-device cap: 5 fit, the 6th is refused; then clean up.

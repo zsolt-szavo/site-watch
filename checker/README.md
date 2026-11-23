@@ -6,6 +6,9 @@ selector / ignore / contains filters → diff against `last_text` → Web Push t
 - `mode=plain`: HTTP only. `mode=browser`: headless Chromium (Playwright). `mode=feed`: RSS/Atom items.
 - `mode=auto` (default): HTTP first; falls back to Chromium when the page is a bot wall, the selector
   isn't in the static HTML, or there's < 200 chars of text. Still blocked ⇒ `last_error = "blocked (HTTP …)"`.
+- Screenshots: after the text pass, one Chromium run takes a 1280×900 viewport JPEG (quality 60, retried at 35 if
+  > 900 kB) of every page that was read; browser-mode pages reuse their load, plain ones get one extra load. It goes
+  to the Worker base64 as `shot`; a failed picture never fails the watch. `--no-shots` skips them.
 - Relative timestamps ("5 minutes ago", "12 perce", "2 ore fa", "yesterday") are cut out of every line before
   comparing, so they never trigger an alert. The rest of the line is still compared.
 - Politeness / rate limits: each URL is downloaded once per run (watches sharing a page share the download),

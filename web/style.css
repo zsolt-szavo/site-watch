@@ -121,3 +121,34 @@ dialog {
 dialog::backdrop { background: rgb(0 0 0 / .45); }
 dialog form { border: 0; }
 dialog h2 { margin: 0; overflow-wrap: anywhere; }
+
+/* Screenshots: "Pictures ▾" on the meta line opens a row of thumbnails, newest first. */
+.shots-toggle {
+  background: none; color: var(--accent); border: 0; padding: 0 2px; margin-left: 4px;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.shots-toggle[hidden] { display: none; }
+@media (pointer: coarse) { .shots-toggle { padding: 8px 4px; margin: -8px 0; } }
+.shots { margin-top: 8px; }
+.shots[hidden] { display: none; }
+.shots-note { margin-bottom: 6px; }
+.shots-row {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(140px, calc((100% - 16px) / 3));
+  gap: 8px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 4px;
+}
+.shots-row figure { margin: 0; min-width: 0; scroll-snap-align: start; }
+button.shot {
+  display: block; width: 100%; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  background: var(--diff-bg); aspect-ratio: 1280 / 900;
+}
+button.shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+button.shot img:not([src]) { visibility: hidden; }
+button.shot.broken::after { content: "no picture"; color: var(--muted); font-size: .8rem; font-weight: 500; }
+.shots-row figcaption { display: grid; font-size: .8rem; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.shots-row figcaption span { color: var(--muted); }
+#shot-dialog { width: min(1300px, calc(100vw - 16px)); }
+#shot-dialog form { gap: 10px; }
+#shot-dialog .row { align-items: center; }
+#shot-dialog h2 { font-size: 1rem; text-transform: none; letter-spacing: 0; color: var(--text); }
+#shot-dialog img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; min-height: 120px; background: var(--diff-bg); }
+#shot-dialog .diff { max-height: none; margin: 0; }
