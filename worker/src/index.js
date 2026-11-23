@@ -1,4 +1,4 @@
-// Web Change Watcher API (deployed as the "site-watch" Worker). Stores watches + push subscriptions in D1.
+// Web Watcher API (deployed as the "site-watch" Worker). Stores watches + push subscriptions in D1.
 // Public:   GET  /api/config, GET /api/watches, GET /api/watches/:id
 //           POST /api/watches            {url, name?, selector?, contains?, ignore?, mode?}
 //           PATCH /api/watches/:id       same fields

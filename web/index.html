@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Web Change Watcher</title>
+  <title>Web Watcher</title>
   <meta name="description" content="Get a notification when a web page changes.">
   <meta name="theme-color" content="#0f766e">
   <link rel="manifest" href="manifest.json">
@@ -19,7 +19,7 @@
 <body>
   <header>
     <img src="icons/icon-192.png" alt="" width="32" height="32">
-    <h1>Web Change Watcher</h1>
+    <h1>Web Watcher</h1>
     <button id="refresh" class="ghost" type="button" title="Reload the list" aria-label="Refresh the list"><span aria-hidden="true">↻</span><span class="lbl">Refresh</span></button>
     <button id="open-add" type="button"><span aria-hidden="true">+</span> Add<span class="wide"> page</span></button>
   </header>
@@ -43,7 +43,6 @@
       </div>
       <p id="empty" class="muted" hidden>Nothing watched yet. Tap <strong>Add page</strong> to start.</p>
       <ul id="watches"></ul>
-      <p id="schedule-note" class="muted small" hidden>Pages are checked every 10 minutes.</p>
     </section>
   </main>
 
@@ -117,11 +116,13 @@
         <span class="badge"></span>
       </div>
       <div class="url muted"></div>
-      <div class="meta muted"><span class="meta-text"></span>
-        <button type="button" class="shots-toggle" aria-expanded="false" hidden>Pictures <span aria-hidden="true">▾</span></button>
-        <button type="button" class="shots-toggle text-toggle" aria-expanded="false" hidden>Text <span aria-hidden="true">▾</span></button></div>
-      <div class="shots" hidden><p class="shots-note muted small"></p><div class="shots-row"></div></div>
-      <div class="text-panel" hidden><p class="text-note muted small"></p><pre class="page-text"></pre></div>
+      <div class="meta muted"><span class="meta-text"></span></div>
+      <div class="views">
+        <button type="button" class="view-toggle" data-view="shots" aria-expanded="false" hidden>Pictures <span aria-hidden="true">▾</span></button>
+        <button type="button" class="view-toggle" data-view="text" aria-expanded="false" hidden>Text <span aria-hidden="true">▾</span></button>
+      </div>
+      <div class="view shots" data-view="shots" hidden><p class="shots-note muted small" hidden></p><div class="shots-row"></div></div>
+      <div class="view text-panel" data-view="text" hidden><pre class="page-text"></pre></div>
       <pre class="diff" hidden></pre>
       <div class="error" hidden></div>
       <div class="actions">

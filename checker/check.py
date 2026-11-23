@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web Change Watcher checker: fetch every watch, diff against the last check, send Web Push, report back.
+"""Web Watcher checker: fetch every watch, diff against the last check, send Web Push, report back.
 
 Env:
   API_URL            Worker base URL, e.g. https://site-watch.<you>.workers.dev
@@ -42,7 +42,10 @@ MAX_TEXT = 200_000      # cap what we store in D1
 TIMEOUT = 30
 # Screenshot of every watched page (shown in the app next to the one from the last change).
 SHOT_VIEWPORT = {"width": 1280, "height": 900}
-SHOT_QUALITY = (60, 35)       # JPEG quality; the lower one is a retry when the first is too big
+# The whole page, not just the first screen: a change near the bottom must be in the picture too.
+# Very long pages are cut at SHOT_MAX_HEIGHT; a page still too big is retried at lower quality, then shorter.
+SHOT_QUALITY = (60, 40, 25)   # JPEG quality ladder, tried in order until the picture fits
+SHOT_MAX_HEIGHT = 8000        # CSS px
 MAX_SHOT_BYTES = 900_000      # the Worker stores each in a D1 row (2 MB limit) and rejects bigger ones
 # Many sites rate-limit per IP, and GitHub's runners share theirs. So one run downloads each URL once,
 # spaces requests to the same site, and retries a 429/503 once after the site's Retry-After.
@@ -293,12 +296,28 @@ class Browser:
 
 
 def screenshot(page):
-    """Viewport JPEG, retried at lower quality when too big; None when it never fits."""
-    for q in SHOT_QUALITY:
-        jpeg = page.screenshot(type="jpeg", quality=q, timeout=TIMEOUT * 1000)
-        if len(jpeg) <= MAX_SHOT_BYTES:
-            return jpeg
-    return None
+    """Full-page JPEG (cut at SHOT_MAX_HEIGHT), retried at lower quality and then half the height while too
+    big; None when it never fits."""
+    try:
+        # Scroll through once so lazy-loaded images further down are in the picture.
+        height = int(page.evaluate("""async () => {
+            const h = () => document.documentElement.scrollHeight;
+            for (let y = 0; y < Math.min(h(), %d); y += innerHeight) { scrollTo(0, y); await new Promise(r => setTimeout(r, 100)); }
+            scrollTo(0, 0);
+            return h();
+        }""" % SHOT_MAX_HEIGHT))
+    except Exception:
+        height = SHOT_VIEWPORT["height"]
+    height = max(SHOT_VIEWPORT["height"], min(height, SHOT_MAX_HEIGHT))
+    while True:
+        clip = {"x": 0, "y": 0, "width": SHOT_VIEWPORT["width"], "height": height}
+        for q in SHOT_QUALITY:
+            jpeg = page.screenshot(type="jpeg", quality=q, full_page=True, clip=clip, timeout=TIMEOUT * 1000)
+            if len(jpeg) <= MAX_SHOT_BYTES:
+                return jpeg
+        if height <= SHOT_VIEWPORT["height"]:
+            return None
+        height = max(SHOT_VIEWPORT["height"], height // 2)
 
 
 def extract(w, status, body):
