@@ -80,6 +80,8 @@ button {
 }
 button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 6px 12px; font-weight: 500; }
 button.delete:hover { color: var(--bad); border-color: var(--bad); }
+button.move { padding: 6px 10px; min-width: 36px; }
+.watch .move[hidden] { display: none; }
 button:disabled, input:disabled { opacity: .55; cursor: default; }
 
 .buttons { display: flex; gap: 8px; justify-content: flex-end; }

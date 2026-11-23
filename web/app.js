@@ -96,16 +96,48 @@ function metaLine(w) {
   return `Checked ${ago(w.last_checked)} · ` + (w.last_change ? `changed ${ago(w.last_change)}` : "no changes yet");
 }
 
+// ---------- order ----------
+// Card order is per device like the watches themselves, so it lives in localStorage next to the device id.
+// Ids the stored order doesn't know yet (just added, or added before reordering existed) go on top, newest first.
+const ORDER_KEY = "site-watch.order";
+function readOrder() {
+  try { const a = JSON.parse(store.get(ORDER_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function applyOrder(list) {
+  const pos = new Map(readOrder().map((id, i) => [id, i]));
+  const fresh = list.filter((w) => !pos.has(w.id));   // server order: newest first
+  const known = list.filter((w) => pos.has(w.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
+  return fresh.concat(known);
+}
+
+function move(btn) {
+  const id = btn.closest(".watch").dataset.id;
+  const dir = Number(btn.dataset.dir);
+  const i = watches.findIndex((w) => w.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= watches.length) return;
+  [watches[i], watches[j]] = [watches[j], watches[i]];
+  render();
+  // Keep keyboard focus on the moved card; at the top/bottom the pressed arrow is disabled, so use the other one.
+  const li = $(`.watch[data-id="${CSS.escape(id)}"]`);
+  const same = $(`.move[data-dir="${dir}"]`, li);
+  (same.disabled ? $(`.move[data-dir="${-dir}"]`, li) : same).focus();
+}
+
 function render() {
   const list = $("#watches");
   list.replaceChildren();
+  store.set(ORDER_KEY, watches.length ? JSON.stringify(watches.map((w) => w.id)) : "");
   $("#empty").hidden = watches.length > 0;
   $("#check-now").hidden = watches.length === 0;
   $("#schedule-note").hidden = watches.length === 0;
   const canPush = pushSupported && (!isIOS || isStandalone);
-  for (const w of watches) {
+  watches.forEach((w, i) => {
     const li = $("#watch-tpl").content.firstElementChild.cloneNode(true);
     li.dataset.id = w.id;
+    const [up, down] = li.querySelectorAll(".move");
+    up.hidden = down.hidden = watches.length < 2;
+    up.disabled = i === 0;
+    down.disabled = i === watches.length - 1;
     const a = $(".name", li);
     a.textContent = w.name;
     a.href = w.url;
@@ -124,12 +156,12 @@ function render() {
     box.disabled = !canPush || busy.has(w.id);
     if (!canPush) $(".toggle", li).title = isIOS ? "Add to Home Screen first" : "Push alerts aren't supported here";
     list.append(li);
-  }
+  });
 }
 
 async function load() {
   try {
-    watches = await api("/api/watches");
+    watches = applyOrder(await api("/api/watches"));
     await loadMySubs();
     loadError("");
     render();
@@ -374,7 +406,8 @@ async function boot() {
   startRefreshCooldown();
   $("#watches").addEventListener("change", (e) => { if (e.target.matches(".alert")) toggleAlert(e.target); });
   $("#watches").addEventListener("click", (e) => {
-    if (e.target.matches(".delete")) deleteWatch(e.target);
+    if (e.target.matches(".move")) move(e.target);
+    else if (e.target.matches(".delete")) deleteWatch(e.target);
     else if (e.target.matches(".edit")) openEdit(e.target);
   });
   $("#edit").addEventListener("submit", saveEdit);
