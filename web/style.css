@@ -91,7 +91,9 @@ form { background: var(--card); border: 1px solid var(--line); border-radius: 12
 label { display: grid; gap: 4px; font-size: var(--fs-small); }
 label .muted { font-size: var(--fs-small); }
 input[type=text], input[type=password], textarea, select {
-  font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%;
+  /* 16px at least: iOS Safari zooms into a field with smaller text when it's tapped (the labels are smaller). */
+  font: inherit; font-size: max(16px, 1rem);
+  color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%;
 }
 details { display: grid; gap: 12px; }
 details[open] > summary { margin-bottom: 12px; }
@@ -158,5 +160,7 @@ button.shot.broken::after { content: "no picture"; color: var(--muted); font-siz
 #shot-dialog h2 { font-size: var(--fs-body); text-transform: none; letter-spacing: 0; color: var(--text); }
 #shot-dialog img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; min-height: 120px; background: var(--diff-bg); }
 #shot-dialog .diff { max-height: none; margin: 0; }
-/* iOS Safari zooms into any field whose text is under 16px when it's tapped; labels are smaller, so set it here. */
-input, textarea, select { font-size: max(16px, 1rem); }
+/* The card a tapped notification opened. */
+.watch { scroll-margin-top: 12px; }
+.watch.flash { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 40% { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); } }
