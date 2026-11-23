@@ -1,5 +1,6 @@
 name = "site-watch"
 main = "src/index.js"
+account_id = "9606c02b140d15031c968157eb7cee51" # personal account (zsoltszv@gmail.com), not the work one
 compatibility_date = "2025-06-01"
 
 [vars]
@@ -13,4 +14,4 @@ MAX_WATCHES = "100"
 [[d1_databases]]
 binding = "DB"
 database_name = "site-watch"
-database_id = "00000000-0000-0000-0000-000000000000" # replaced at deploy (phase 5)
+database_id = "3b11cf6a-9531-4b71-998e-bcd01abea42f"

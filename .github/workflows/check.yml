@@ -3,6 +3,9 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+permissions:
+  contents: read
+  actions: write  # keep-alive step below
 concurrency:
   group: check
   cancel-in-progress: false
@@ -32,3 +35,11 @@ jobs:
           API_URL: ${{ secrets.API_URL }}
           CHECKER_TOKEN: ${{ secrets.CHECKER_TOKEN }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      # GitHub disables scheduled workflows after 60 days without repo activity.
+      # Re-enabling via the API resets that timer, so every scheduled run keeps itself alive.
+      - name: Keep schedule alive
+        if: always() && github.event_name == 'schedule'
+        working-directory: .
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/check.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
