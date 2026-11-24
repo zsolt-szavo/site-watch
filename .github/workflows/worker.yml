@@ -2,6 +2,8 @@ name: worker
 # Deploys the Cloudflare Worker whenever worker/ changes on main (the PWA has its own pages.yml).
 # Needs repo secret CLOUDFLARE_API_TOKEN: a Cloudflare API token from the "Edit Cloudflare Workers"
 # template, limited to the personal account pinned as account_id in worker/wrangler.toml.
+# That template can't change D1, so a schema change (new table or column in worker/schema.sql) is applied by hand
+# BEFORE merging the code that needs it: cd worker && npm run db:remote (idempotent, uses your own wrangler login).
 # Also copies repo secret GH_DISPATCH_TOKEN (fine-grained PAT, Actions: read and write) into the Worker.
 on:
   push:
@@ -35,7 +37,6 @@ jobs:
             echo "::error::Repo secret CLOUDFLARE_API_TOKEN is not set, so the Worker was not deployed (see worker.yml header)."
             exit 1
           fi
-          npx wrangler d1 execute site-watch --remote --file=schema.sql   # idempotent: adds new tables first
           npx wrangler deploy
       # The Worker can't read GitHub secrets, so copy the ones it needs into its own Cloudflare secrets.
       - name: Sync Worker secrets
