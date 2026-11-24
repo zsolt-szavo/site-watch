@@ -78,10 +78,6 @@ ul#watches { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; 
 .badge { font-size: var(--fs-small); font-weight: 600; line-height: 1.3; border-radius: 999px; padding: 2px 9px; white-space: nowrap; border: 1px solid currentColor; }
 .badge.ok { color: var(--ok); } .badge.pending { color: var(--muted); }
 .badge.blocked { color: var(--warn); } .badge.retrying { color: var(--muted); } .badge.error { color: var(--bad); }
-.diff {
-  background: var(--diff-bg); border-radius: 8px; padding: 8px 10px; margin: 8px 0 0; font-size: var(--fs-mono);
-  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow: auto;
-}
 .error { color: var(--bad); font-size: var(--fs-small); margin-top: 6px; overflow-wrap: anywhere; }
 .actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .actions .buttons { margin-left: auto; }   /* stays right-aligned when it wraps under the toggle */
@@ -160,7 +156,25 @@ button.shot.broken::after { content: "no picture"; color: var(--muted); font-siz
 #shot-dialog .row { align-items: center; }
 #shot-dialog h2 { font-size: var(--fs-body); text-transform: none; letter-spacing: 0; color: var(--text); }
 #shot-dialog img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; min-height: 120px; background: var(--diff-bg); }
-#shot-dialog .diff { max-height: none; margin: 0; }
+.shot-wrap { position: relative; }
+/* Changed areas of a picture, outlined (see markChanges); red with a white halo shows on any page. */
+button.shot { position: relative; }
+.mark {
+  position: absolute; pointer-events: none; border: 2px solid #ff2d55; border-radius: 6px;
+  box-shadow: 0 0 0 1px #fff, inset 0 0 0 1px #fff; margin: -3px; box-sizing: content-box; padding: 1px;
+}
+/* What changed in the text: removed lines struck through in red, added lines in green. */
+.changes { display: grid; gap: 6px; margin-bottom: 8px; max-height: 20em; overflow: auto; overscroll-behavior: contain; }
+.changes > p { margin: 0; font-size: var(--fs-small); }
+.chg { border-left: 3px solid; border-radius: 6px; padding: 6px 10px; font-size: var(--fs-small); }
+.chg h3 { margin: 0 0 2px; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.chg p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chg.add { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.chg.add h3 { color: var(--ok); }
+.chg.del { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+.chg.del h3 { color: var(--bad); }
+.chg.del p { text-decoration: line-through; color: var(--muted); }
+.text-versions details summary { cursor: pointer; color: var(--accent); font-size: var(--fs-small); font-weight: 600; margin-bottom: 6px; }
 /* The card a tapped notification opened. */
 .watch { scroll-margin-top: 12px; }
 .watch.flash { animation: flash 2.4s ease-out; }

@@ -169,7 +169,6 @@ function render() {
     if (view === "shots" && w.has_shots) showShots(li, w);
     if (view === "text" && w.last_checked) showText(li, w);
     meta.title = `Checked: ${w.last_checked || "not yet"}\nLast change: ${w.last_change || "none seen yet"}`;
-    if (w.last_diff) { const d = $(".diff", li); d.textContent = w.last_diff; d.hidden = false; }
     if (w.last_error && !retrying(w)) { const e = $(".error", li); e.textContent = w.last_error; e.hidden = false; }
     const box = $(".alert", li);
     box.checked = busy.has(w.id) ? busy.get(w.id) : mySubs.has(w.id);
@@ -275,7 +274,8 @@ async function showShots(li, w) {
     }
   }
   if (waited && !li.isConnected) return;   // the list was redrawn meanwhile; the new card loads its own
-  row.replaceChildren(...shotItems(list.items).map((s) => {
+  const items = shotItems(list.items);
+  row.replaceChildren(...items.map((s, i) => {
     const fig = document.createElement("figure");
     const btn = document.createElement("button");
     btn.type = "button";
@@ -292,6 +292,7 @@ async function showShots(li, w) {
     frame.append(btn);
     fig.append(cap, frame);
     shotUrl(w.id, s.id).then((u) => { img.src = u; }, () => { btn.classList.add("broken"); });
+    if (items[i + 1]) markChanges(btn, w.id, s.id, items[i + 1].id);   // outline what differs from the version before
     return fig;
   }));
 }
@@ -306,6 +307,37 @@ const textItems = (t) => {
   const [current, ...older] = t.versions || [];
   return [{ now: true, since: current, taken_at: t.checked, text: t.text || current?.text || "" }, ...older];
 };
+
+// A stored diff ("➖ old line" / "➕ new line", in order) as "Removed" and "Added" blocks.
+function changesBlock(diff) {
+  if (!diff) return null;
+  const box = document.createElement("div");
+  box.className = "changes";
+  let group = null;
+  for (const line of diff.split("\n")) {
+    const m = line.match(/^(➕|➖|\+|-) ?(.*)$/s);
+    if (!m) {   // "(whitespace/order change)"
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = /whitespace|order/.test(line) ? "Only spacing or the order of lines changed." : line;
+      box.append(p);
+      group = null;
+      continue;
+    }
+    const kind = m[1] === "➕" || m[1] === "+" ? "add" : "del";
+    if (group?.dataset.kind !== kind) {
+      group = document.createElement("div");
+      group.className = `chg ${kind}`;
+      group.dataset.kind = kind;
+      group.innerHTML = `<h3>${kind === "add" ? "Added" : "Removed"}</h3>`;
+      box.append(group);
+    }
+    const p = document.createElement("p");
+    p.textContent = m[2];
+    group.append(p);
+  }
+  return box;
+}
 
 async function showText(li, w) {
   setView(li, "text");
@@ -330,9 +362,127 @@ async function showText(li, w) {
     const pre = document.createElement("pre");
     pre.className = "page-text";
     pre.textContent = v.text || "(no text read yet)";
-    fig.append(caption(...shotCaption(v, "read")), pre);
+    fig.append(caption(...shotCaption(v, "read")));
+    const changes = changesBlock(v.now ? v.since?.diff : v.diff);
+    if (changes) fig.append(changes);
+    if (v.now) fig.append(pre);
+    else {   // older versions: what changed, with their full text folded away
+      const more = document.createElement("details");
+      more.innerHTML = "<summary>Full text</summary>";
+      more.append(pre);
+      fig.append(more);
+    }
     return fig;
   }));
+}
+
+// ---------- what changed in a picture ----------
+// Both pictures are shrunk to SAMPLE_W wide and read as a grid of CELL-wide columns (average colour per
+// 1-pixel row, summed so any CELL-high band can be averaged at any height). The newer picture is walked in
+// CELL-high bands; each band looks for itself in the older picture at the current vertical shift, then at
+// shifts up to MAX_SHIFT away (nearest first); a new shift must hold for CONTEXT bands in a row, so a slice of
+// a changed line can't "match" some other line that happens to look alike. Found: unchanged, just moved (an insertion above pushes the
+// rest down, and that shouldn't be marked). Not found: its cells are compared with the older picture at the
+// current shift, and the ones that differ are marked. Marked cells are merged into boxes and outlined on the
+// newer picture. All in the browser, from the blobs already loaded.
+const SAMPLE_W = 256, CELL = 4, CONTEXT = 4, COLS = SAMPLE_W / CELL, CELL_DIFF = 14, MAX_SHIFT = 1200, MAX_MARKS = 12;
+const markCache = new Map();   // "newId|oldId" -> promise of [[x, y, w, h], ...] as fractions of the newer picture
+
+const loadImg = (url) => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = url; });
+
+function sampled(img) {   // -> {h, P}: P[(y * COLS + c) * 3 + rgb] = sum of cell c's colour over rows 0..y-1
+  const h = Math.max(CELL, Math.min(12000, Math.round(img.naturalHeight * SAMPLE_W / img.naturalWidth)));
+  const cv = document.createElement("canvas");
+  cv.width = SAMPLE_W; cv.height = h;
+  const g = cv.getContext("2d", { willReadFrequently: true });
+  g.drawImage(img, 0, 0, SAMPLE_W, h);
+  const px = g.getImageData(0, 0, SAMPLE_W, h).data, K = COLS * 3, P = new Float64Array((h + 1) * K);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < SAMPLE_W; x++) {
+      const k = (y * SAMPLE_W + x) * 4, j = (y + 1) * K + Math.floor(x / CELL) * 3;
+      P[j] += px[k] / CELL; P[j + 1] += px[k + 1] / CELL; P[j + 2] += px[k + 2] / CELL;
+    }
+  for (let y = 1; y <= h; y++) for (let j = 0; j < K; j++) P[y * K + j] += P[(y - 1) * K + j];
+  return { h, P };
+}
+
+function band(S, y) {   // average colour of each cell over rows y..y+CELL-1
+  const K = COLS * 3, out = new Float32Array(K);
+  for (let j = 0; j < K; j++) out[j] = (S.P[(y + CELL) * K + j] - S.P[y * K + j]) / CELL;
+  return out;
+}
+
+const cellDiff = (a, b, j) => (Math.abs(a[j] - b[j]) + Math.abs(a[j + 1] - b[j + 1]) + Math.abs(a[j + 2] - b[j + 2])) / 3;
+const sameBand = (a, b) => { for (let j = 0; j < a.length; j += 3) if (cellDiff(a, b, j) > CELL_DIFF) return false; return true; };
+
+function changedCells(A, B) {   // A newer, B older (from sampled) -> {marked: Set of "row,col" in A, rows, cols}
+  const marked = new Set(), rows = Math.floor(A.h / CELL), fits = (y) => y >= 0 && y + CELL <= B.h;
+  const bandsA = Array.from({ length: rows }, (_, r) => band(A, r * CELL));
+  const holds = (r, s) => {   // bands r.. (up to CONTEXT of them) sit at shift s in the older picture
+    for (let k = r; k < Math.min(rows, r + CONTEXT); k++)
+      if (!fits(k * CELL + s) || !sameBand(bandsA[k], band(B, k * CELL + s))) return false;
+    return true;
+  };
+  let shift = 0;
+  for (let r = 0; r < rows; r++) {
+    const y = r * CELL, a = bandsA[r];
+    if (fits(y + shift) && sameBand(a, band(B, y + shift))) continue;
+    let found = false;
+    for (let d = 1; d <= MAX_SHIFT && !found; d++)
+      for (const s of [shift - d, shift + d])
+        if (holds(r, s)) { shift = s; found = true; break; }
+    if (found) continue;
+    // Not in the older picture: compare each cell with what was at this spot (best of a pixel up or down:
+    // a shift by a fraction of a sample pixel blurs sharp edges differently), or, past the older picture's
+    // end, with this band's own left edge, i.e. the page background.
+    const near = [-1, 0, 1].filter((d) => fits(y + shift + d)).map((d) => band(B, y + shift + d));
+    if (!near.length) near.push(Float32Array.from(a, (_, k) => a[k % 3]));
+    for (let c = 0; c < COLS; c++)
+      if (Math.min(...near.map((b) => cellDiff(a, b, c * 3))) > CELL_DIFF) marked.add(`${r},${c}`);
+  }
+  return { marked, rows, cols: COLS };
+}
+
+function boxesOf({ marked, rows, cols }) {   // connected changed cells (touching or one cell apart) -> boxes
+  const seen = new Set(), boxes = [];
+  for (const key of marked) {
+    if (seen.has(key)) continue;
+    let [r0, c0] = key.split(",").map(Number), r1 = r0, c1 = c0;
+    const stack = [key]; seen.add(key);
+    let size = 0;
+    while (stack.length) {
+      const [r, c] = stack.pop().split(",").map(Number);
+      size++;
+      r0 = Math.min(r0, r); r1 = Math.max(r1, r); c0 = Math.min(c0, c); c1 = Math.max(c1, c);
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -4; dc <= 4; dc++) {
+        const k = `${r + dr},${c + dc}`;
+        if (marked.has(k) && !seen.has(k)) { seen.add(k); stack.push(k); }
+      }
+    }
+    c0 = Math.max(0, c0 - 1); c1 = Math.min(cols - 1, c1 + 1);   // a cell of air, so the outline frames rather than cuts
+    if (size > 2) boxes.push([c0 / cols, r0 / rows, (c1 - c0 + 1) / cols, (r1 - r0 + 1) / rows]);   // 1-2 cells: resampling noise
+  }
+  // Biggest first.
+  return boxes.sort((a, b) => b[2] * b[3] - a[2] * a[3]).slice(0, MAX_MARKS);
+}
+
+function markChanges(host, watchId, newId, oldId) {
+  const key = `${newId}|${oldId}`;
+  if (!markCache.has(key)) {
+    markCache.set(key, Promise.all([shotUrl(watchId, newId), shotUrl(watchId, oldId)])
+      .then((urls) => Promise.all(urls.map(loadImg)))
+      .then(([a, b]) => boxesOf(changedCells(sampled(a), sampled(b))))
+      .catch(() => []));
+  }
+  markCache.get(key).then((boxes) => {
+    host.querySelectorAll(".mark").forEach((m) => m.remove());
+    for (const [x, y, w, h] of boxes) {
+      const m = document.createElement("span");
+      m.className = "mark";
+      m.style.cssText = `left:${x * 100}%;top:${y * 100}%;width:${w * 100}%;height:${h * 100}%`;
+      host.append(m);
+    }
+  });
 }
 
 async function enlargeShot(btn) {
@@ -341,10 +491,12 @@ async function enlargeShot(btn) {
   if (!s) return;
   const d = $("#shot-dialog");
   $(".title", d).textContent = `${w.name} · ${shotCaption(s).join(", ")}`;
-  const diff = $(".diff", d);
-  diff.textContent = s.diff || "";
-  diff.hidden = !s.diff;
   const img = $("img", d);
+  const wrap = img.parentElement;
+  wrap.querySelectorAll(".mark").forEach((m) => m.remove());
+  const items = shotItems(shotLists.get(w.id).items);
+  const prev = items[items.indexOf(s) + 1];
+  if (prev) markChanges(wrap, w.id, s.id, prev.id);
   img.removeAttribute("src");
   img.alt = `Screenshot of ${w.name}, ${when(s.taken_at)}`;
   d.showModal();
