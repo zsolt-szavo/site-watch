@@ -381,10 +381,14 @@ def check_browser(w, browser):
 
 # ---------------------------------------------------------------- diff + push
 
+DIFF_LINE_MAX = 300
+
+
 def summarize(old, new):
     diff = [l for l in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0)
             if l[:1] in "+-" and not l.startswith(("+++", "---"))]
-    return "\n".join(("➕ " if l[0] == "+" else "➖ ") + l[1:] for l in diff[:25]) or "(whitespace/order change)"
+    clip = lambda s: s if len(s) <= DIFF_LINE_MAX else s[:DIFF_LINE_MAX] + "…"   # a feed is often one huge line
+    return "\n".join(("➕ " if l[0] == "+" else "➖ ") + clip(l[1:]) for l in diff[:25]) or "(whitespace/order change)"
 
 
 def compare(w, lines):
@@ -487,15 +491,41 @@ def run(api, token, vapid_key, subject, dry_run=False, no_shots=False, home=Fals
     finally:
         browser.close()
 
-    results, dead = [], set()
+    # Each watch is reported on its own, and only a stored change is pushed: one write the Worker rejects
+    # (a 500 on a big page) loses that watch's result for this run, not everyone's. The run still fails
+    # (exit 1) so it shows up red in Actions, after reporting everything else.
+    failed, dead = [], set()
+    via_home = {"via": "home"} if home else {}
+
+    def report(body):
+        if dry_run:
+            return True
+        err = None
+        for attempt in range(2):
+            try:
+                r = requests.post(f"{api}/api/internal/report", headers=auth, timeout=TIMEOUT, json={**via_home, **body})
+                if r.ok:
+                    return True
+                err = f"HTTP {r.status_code}: {r.text[:300]}"
+                if r.status_code < 500:
+                    break
+            except requests.RequestException as e:
+                err = describe_error(e)
+            time.sleep(3)
+        print(f"  report failed: {err}", file=sys.stderr)
+        return False
+
     for w in watches:
         via = "browser" if w in need_browser else fetcher.via.get(w["url"], "plain")
         if w["id"] in errors:
             print(f"[{w['name']}] ERROR ({via}): {errors[w['id']]}")
-            results.append({"id": w["id"], "error": errors[w["id"]]})
+            if not report({"results": [{"id": w["id"], "error": errors[w["id"]]}], "partial": True}):
+                failed.append(w["name"])
             continue
         res = compare(w, lines_by_id[w["id"]])
-        results.append(with_shot(res, shots.get(w["id"])))
+        stored = report({"results": [with_shot(res, shots.get(w["id"]))], "partial": True})
+        if not stored:
+            failed.append(w["name"])
         if w["id"] not in shots or shots[w["id"]] is None:
             via += ", no screenshot"
         if not res["changed"] and res["hash"] != w.get("last_hash"):
@@ -505,16 +535,19 @@ def run(api, token, vapid_key, subject, dry_run=False, no_shots=False, home=Fals
         else:
             subs = len(w.get("subscriptions") or [])
             print(f"[{w['name']}] CHANGED ({via}), pushing to {subs}\n{res['diff']}")
-            if subs and not dry_run:
+            if subs and stored and not dry_run:   # not stored: the next run finds the change again and alerts then
                 dead.update(send_push(w, vapid_key, subject))
 
     if dry_run:
         print("dry run: nothing reported")
         return 0
-    r = requests.post(f"{api}/api/internal/report", headers=auth, timeout=TIMEOUT,
-                      json={"results": results, "dead_endpoints": sorted(dead), **({"via": "home"} if home else {})})
-    r.raise_for_status()
-    print(f"reported {len(results)} result(s), {len(dead)} dead endpoint(s)")
+    # The closing report: dead push endpoints, and (GitHub run) the end of the app's "Checking…".
+    if not report({"results": [], "dead_endpoints": sorted(dead)}):
+        failed.append("(closing report)")
+    print(f"reported {len(watches) - len(failed)} of {len(watches)} watch(es), {len(dead)} dead endpoint(s)")
+    if failed:
+        print(f"not stored: {', '.join(failed)}", file=sys.stderr)
+        return 1
     return 0
 
 

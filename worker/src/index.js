@@ -16,6 +16,7 @@
 //           GET  /api/check-status       {state: idle|queued|running, dispatched_at, started_at, finished_at, available_at}
 // Cron:     every 10 min the Worker starts the same workflow (GitHub's own schedule is late or skipped).
 // Checker:  GET  /api/internal/jobs[?start=1], POST /api/internal/report   header Authorization: Bearer CHECKER_TOKEN
+//           POST /api/internal/report {results, dead_endpoints?, partial?}: partial = more reports follow in this run
 //           GET  /api/internal/jobs?home=1, POST /api/internal/report {via: "home"}: the home checker (a computer on a
 //                home connection, checker/home/) takes the watches GitHub's runners get blocked on; see HOME_FRESH_MS.
 //           POST /api/internal/fetch {url, ua}  -> {status, body}: fetch a page from Cloudflare's network
@@ -473,7 +474,10 @@ async function route(req, env) {
     }
     for (const endpoint of b.dead_endpoints || [])
       stmts.push(env.DB.prepare("DELETE FROM subscriptions WHERE endpoint = ?").bind(String(endpoint)));
-    if (b.via !== "home") stmts.push(setMeta(env, "run_finished", t));   // the app's "Checking…" tracks the GitHub run
+    // The app's "Checking…" tracks the GitHub run. The checker reports watch by watch with partial: true, then
+    // closes with one report without it.
+    if (b.via !== "home" && !b.partial) stmts.push(setMeta(env, "run_finished", t));
+    if (!stmts.length) return json({ ok: true, updated: 0 });
     await env.DB.batch(stmts);
     return json({ ok: true, updated: stmts.length });
   }

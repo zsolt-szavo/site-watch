@@ -243,5 +243,55 @@ class Push(unittest.TestCase):
         self.assertEqual(msg, {"title": "New version for example.com", "body": "Site", "url": "https://example.com/", "watch_id": "a"})
 
 
+class RunReportTest(unittest.TestCase):
+    """Each watch is reported on its own: a rejected report loses only that watch, and its change isn't pushed."""
+    def test_one_failed_report_keeps_the_rest(self):
+        jobs = [{"id": i, "name": i, "url": f"https://{i}.example/", "last_hash": f"{check.EXTRACT_VERSION}:old",
+                 "last_text": "old", "subscriptions": [{"endpoint": "https://push.example/x", "keys": {}}]}
+                for i in ("a", "b", "c")]
+        posts = []
+
+        class Api(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                body = json.dumps(jobs).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+                self.wfile.write(body)
+            def do_POST(self):
+                b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                posts.append(b)
+                bad = any(r["id"] == "b" for r in b["results"])
+                self.send_response(500 if bad else 200); self.send_header("Content-Length", "2"); self.end_headers()
+                self.wfile.write(b"{}")
+
+        srv = HTTPServer(("127.0.0.1", 0), Api)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        pushed = []
+        orig = (check.check_plain, check.Browser, check.send_push, check.time.sleep)
+        class NoBrowser:
+            def __init__(self, *a): pass
+            def shot(self, url): return None
+            def close(self): pass
+        check.check_plain = lambda w, f: ["new"]
+        check.Browser = NoBrowser
+        check.send_push = lambda w, *a: pushed.append(w["id"]) or []
+        check.time.sleep = lambda s: None
+        try:
+            rc = check.run(f"http://127.0.0.1:{srv.server_address[1]}", "t", "k", "s")
+        finally:
+            check.check_plain, check.Browser, check.send_push, check.time.sleep = orig
+            srv.shutdown()
+        self.assertEqual(rc, 1)
+        self.assertEqual(sorted(pushed), ["a", "c"])
+        ids = [r["id"] for p in posts for r in p["results"]]
+        self.assertEqual(sorted(ids), ["a", "b", "b", "c"])          # b retried once
+        self.assertTrue(all(p.get("partial") for p in posts if p["results"]))
+        self.assertEqual(posts[-1], {"results": [], "dead_endpoints": []})   # closing report ends "Checking…"
+
+    def test_long_diff_lines_are_clipped(self):
+        d = check.summarize("x" * 1000, "y" * 1000)
+        self.assertTrue(all(len(l) <= check.DIFF_LINE_MAX + 3 for l in d.splitlines()))
+
+
 if __name__ == "__main__":
     unittest.main()
